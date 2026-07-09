@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Mario-style platformer: Vite + TypeScript + PixiJS v8 (WebGPU) + miniplex ECS + zustand + React HUD",
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

@@ -2,15 +2,16 @@ import { useGameStore } from "@state/store";
 
 const barStyle: React.CSSProperties = {
   position: "absolute",
-  top: 12,
-  left: 16,
-  right: 16,
+  // env() keeps the bar clear of notches on phones.
+  top: "calc(10px + env(safe-area-inset-top))",
+  left: "calc(14px + env(safe-area-inset-left))",
+  right: "calc(14px + env(safe-area-inset-right))",
   display: "flex",
   justifyContent: "space-between",
   alignItems: "flex-start",
   color: "#fff",
   textShadow: "2px 2px 0 #181425",
-  fontSize: 18,
+  fontSize: "clamp(13px, 2.6vmin, 19px)",
   fontWeight: 700,
   letterSpacing: 1,
 };
@@ -29,14 +30,14 @@ export function HUD() {
     <div style={barStyle}>
       <div>
         <div>SCORE {String(score).padStart(6, "0")}</div>
-        <div style={{ fontSize: 14, marginTop: 4, color: "#fee761" }}>
+        <div style={{ fontSize: "0.8em", marginTop: 4, color: "#fee761" }}>
           ● ×{String(coins).padStart(2, "0")}
         </div>
       </div>
 
       {bossMaxHp > 0 && (
         <div style={{ textAlign: "center", flex: 1, maxWidth: 320, margin: "0 24px" }}>
-          <div style={{ fontSize: 13, color: "#f6757a", marginBottom: 4 }}>BOSS</div>
+          <div style={{ fontSize: "0.75em", color: "#f6757a", marginBottom: 4 }}>BOSS</div>
           <div
             style={{
               height: 12,
@@ -60,7 +61,7 @@ export function HUD() {
 
       <div style={{ textAlign: "right" }}>
         <div style={{ color: "#f6757a" }}>♥ ×{lives}</div>
-        <div style={{ fontSize: 13, marginTop: 4, color: playerHp >= 2 ? "#63c74d" : "#8b9bb4" }}>
+        <div style={{ fontSize: "0.75em", marginTop: 4, color: playerHp >= 2 ? "#63c74d" : "#8b9bb4" }}>
           {playerHp >= 2 ? "SUPER" : "SMALL"}
         </div>
       </div>
@@ -74,7 +75,7 @@ export function HUD() {
             right: 0,
             textAlign: "center",
             color: "#63c74d",
-            fontSize: 22,
+            fontSize: "clamp(16px, 3vmin, 24px)",
             animation: "hud-pop 300ms ease-out",
           }}
         >

@@ -78,7 +78,9 @@ export const useGameStore = create<GameState>()(
     crt: false,
     runId: 0,
     stats: { fps: 0, entityCount: 0, particleCount: 0, renderer: "?", tickMs: 0 },
-    touchDevice: typeof window !== "undefined" && "ontouchstart" in window,
+    touchDevice:
+      typeof window !== "undefined" &&
+      (window.matchMedia?.("(pointer: coarse)").matches || "ontouchstart" in window),
 
     startGame: (level) =>
       set((s) => ({

@@ -3,6 +3,7 @@ import type { InputManager } from "@game/input/InputManager";
 import { HUD } from "./HUD";
 import { DebugOverlay } from "./DebugOverlay";
 import { TouchControls } from "./TouchControls";
+import { RotateOverlay } from "./RotateOverlay";
 import { GameOver, LevelComplete, LevelSelect, MainMenu, PauseMenu, Victory } from "./Menus";
 
 /**
@@ -26,6 +27,7 @@ export function App({ input }: { input: InputManager }) {
       {screen === "victory" && <Victory />}
       {debug && <DebugOverlay />}
       {touchDevice && screen === "playing" && <TouchControls input={input} />}
+      <RotateOverlay />
     </>
   );
 }

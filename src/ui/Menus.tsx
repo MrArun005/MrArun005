@@ -1,6 +1,23 @@
 import { useGameStore } from "@state/store";
 import { LEVEL_NAMES } from "@game/level/levels";
 
+/**
+ * On touch devices, entering gameplay goes fullscreen + locks landscape.
+ * Must run inside the user-gesture handler; failures (iOS Safari) are fine.
+ */
+function enterMobileFullscreen(): void {
+  if (!useGameStore.getState().touchDevice) return;
+  const el = document.documentElement;
+  el.requestFullscreen?.({ navigationUI: "hide" })
+    .then(() => {
+      const orientation = screen.orientation as ScreenOrientation & {
+        lock?: (o: string) => Promise<void>;
+      };
+      orientation.lock?.("landscape").catch(() => {});
+    })
+    .catch(() => {});
+}
+
 const overlay: React.CSSProperties = {
   position: "absolute",
   inset: 0,
@@ -17,23 +34,27 @@ const overlay: React.CSSProperties = {
 
 const btn: React.CSSProperties = {
   font: "inherit",
-  fontSize: 18,
+  fontSize: "clamp(15px, 2.8vmin, 19px)",
   fontWeight: 700,
   letterSpacing: 1,
-  padding: "10px 28px",
+  padding: "12px 28px", // comfortable touch target (≥44px tall)
   cursor: "pointer",
   color: "#fff",
   background: "#2c6ff2",
   border: "3px solid #181425",
   borderRadius: 6,
   boxShadow: "0 4px 0 #181425",
-  minWidth: 240,
+  minWidth: "min(260px, 72vw)",
 };
 
 const btnAlt: React.CSSProperties = { ...btn, background: "#5a6988" };
 
 function Title({ children }: { children: React.ReactNode }) {
-  return <h1 style={{ fontSize: 42, margin: 0, color: "#fee761", textAlign: "center" }}>{children}</h1>;
+  return (
+    <h1 style={{ fontSize: "clamp(24px, 6vmin, 44px)", margin: 0, color: "#fee761", textAlign: "center", padding: "0 16px" }}>
+      {children}
+    </h1>
+  );
 }
 
 export function MainMenu() {
@@ -43,7 +64,15 @@ export function MainMenu() {
     <div style={overlay}>
       <Title>SUPER PLUMBER BROS</Title>
       <p style={{ margin: "0 0 10px", color: "#8b9bb4" }}>PixiJS v8 · WebGPU · ECS</p>
-      <button style={btn} onClick={() => startGame(0)}>START GAME</button>
+      <button
+        style={btn}
+        onClick={() => {
+          enterMobileFullscreen();
+          startGame(0);
+        }}
+      >
+        START GAME
+      </button>
       <button style={btnAlt} onClick={() => setScreen("levelselect")}>LEVEL SELECT</button>
       <p style={{ fontSize: 13, color: "#8b9bb4", maxWidth: 460, textAlign: "center", lineHeight: 1.7 }}>
         ARROWS / WASD move · SPACE/Z jump (hold = higher) · SHIFT/X run
@@ -68,7 +97,10 @@ export function LevelSelect() {
             key={name}
             style={{ ...btn, background: locked ? "#3a4466" : "#2c6ff2", opacity: locked ? 0.6 : 1 }}
             disabled={locked}
-            onClick={() => startGame(i)}
+            onClick={() => {
+              enterMobileFullscreen();
+              startGame(i);
+            }}
           >
             {i + 1}. {name} {locked ? "🔒" : ""}
           </button>
@@ -120,7 +152,15 @@ export function GameOver() {
     <div style={overlay}>
       <Title>GAME OVER</Title>
       <p style={{ fontSize: 20 }}>SCORE {String(score).padStart(6, "0")}</p>
-      <button style={btn} onClick={() => startGame(level)}>TRY AGAIN</button>
+      <button
+        style={btn}
+        onClick={() => {
+          enterMobileFullscreen();
+          startGame(level);
+        }}
+      >
+        TRY AGAIN
+      </button>
       <button style={btnAlt} onClick={() => setScreen("menu")}>MENU</button>
     </div>
   );

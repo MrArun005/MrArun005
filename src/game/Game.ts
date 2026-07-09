@@ -97,6 +97,10 @@ export class Game {
       activatedCheckpoints: new Set(),
       addTrauma(amount: number) {
         this.camera.trauma = Math.min(1, this.camera.trauma + amount);
+        // Haptics on mobile for meaty hits.
+        if (amount >= 0.3 && typeof navigator !== "undefined" && navigator.vibrate) {
+          navigator.vibrate(Math.round(amount * 60));
+        }
       },
       hitStop(ms: number) {
         game.hitStopMs = Math.max(game.hitStopMs, ms);
@@ -106,6 +110,15 @@ export class Game {
     this.buildStage();
     this.input.attach();
     this.wireStore();
+
+    // Mobile-friendly: backgrounding the tab/app auto-pauses instead of
+    // letting the accumulator pile up.
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden && useGameStore.getState().screen === "playing") {
+        useGameStore.getState().setScreen("paused");
+      }
+    });
+
     app.ticker.add(() => this.tick());
   }
 
@@ -160,8 +173,9 @@ export class Game {
   }
 
   private layout(): void {
-    const w = this.app.renderer.width / this.app.renderer.resolution;
-    const h = this.app.renderer.height / this.app.renderer.resolution;
+    // app.screen is in logical (CSS) pixels regardless of resolution.
+    const w = this.app.screen.width;
+    const h = this.app.screen.height;
     const scale = Math.min(w / VIEW_W, h / VIEW_H);
     this.viewport.scale.set(scale);
     this.viewport.position.set((w - VIEW_W * scale) / 2, (h - VIEW_H * scale) / 2);

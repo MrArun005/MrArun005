@@ -23,8 +23,9 @@ export const PLAYER = {
   /** Falling gravity is asymmetric — 1.6x — so jumps feel snappy, not floaty. */
   GRAVITY_DOWN: 1500 * 1.6,
   MAX_FALL: 460,
-  /** Releasing jump early clamps upward velocity to this — variable jump height. */
-  JUMP_CUT_VELOCITY: 110,
+  /** Releasing jump early clamps upward velocity to this — variable jump
+   *  height. Sized so a single quick tap still hops ~1 tile (mobile-friendly). */
+  JUMP_CUT_VELOCITY: 200,
   /** Grace period after walking off a ledge during which jump still works. */
   COYOTE_TIME: 0.1, // 100 ms
   /** Pressing jump slightly before landing still triggers the jump. */

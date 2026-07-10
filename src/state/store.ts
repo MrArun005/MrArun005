@@ -78,9 +78,11 @@ export const useGameStore = create<GameState>()(
     crt: false,
     runId: 0,
     stats: { fps: 0, entityCount: 0, particleCount: 0, renderer: "?", tickMs: 0 },
+    // Coarse *primary* pointer = phone/tablet. A touchscreen laptop keeps its
+    // mouse-first experience (no thumb buttons, no rotate prompt).
     touchDevice:
       typeof window !== "undefined" &&
-      (window.matchMedia?.("(pointer: coarse)").matches || "ontouchstart" in window),
+      (window.matchMedia?.("(pointer: coarse)").matches ?? "ontouchstart" in window),
 
     startGame: (level) =>
       set((s) => ({

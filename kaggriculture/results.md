@@ -6,14 +6,14 @@ Score is final cash. Both seats are played because atomic market orders (`HIRE`,
 
 | Opponent | Episodes | Our mean | Stdev | Min | Max | Their mean | Win rate |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `pass` | 20 | **71,938** | 1,865 | 68,135 | 74,109 | 3,000 | 100% |
-| `starter` | 20 | **71,645** | 1,870 | 68,639 | 74,364 | 3,497 | 100% |
-| `random` | 20 | **71,456** | 1,732 | 68,666 | 74,502 | 10 | 100% |
+| `pass` | 20 | **73,227** | 2,146 | 68,576 | 76,131 | 3,000 | 100% |
+| `starter` | 20 | **73,320** | 2,075 | 68,817 | 75,431 | 3,497 | 100% |
+| `random` | 20 | **72,856** | 2,268 | 68,946 | 76,319 | 4 | 100% |
 | **self-play** | 20 | **35,040** | 2,261 | 29,083 | 38,056 | 35,040 | 45% |
 
 ## Parameters
 
-The set actually used for the runs above, read from the `Params` defaults in `rules.py` (no `params.json` present). Values were searched by `tune.py` (coordinate descent over paired seeds, with both a 1.5-sigma and an effect-size gate) and then validated on seeds the search never saw: +3,106 out of sample, with stdev falling from 3,390 to 1,134.
+The set actually used for the runs above, read from the `Params` defaults in `rules.py` (no `params.json` present). Values were searched by `tune.py` (coordinate descent over paired seeds, with both a 1.5-sigma and an effect-size gate) and then validated on seeds the search never saw.
 
 ```json
 {
@@ -31,7 +31,7 @@ The set actually used for the runs above, read from the `Params` defaults in `ru
   "land_cash_reserve": 1200.0,
   "land_empty_threshold": 6,
   "last_animal_day": 21,
-  "last_land_day": 22,
+  "last_land_day": 15,
   "max_hands": 14,
   "max_hire_cost": 144.0,
   "max_hires_per_turn": 6,

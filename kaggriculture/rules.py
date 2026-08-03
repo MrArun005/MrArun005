@@ -41,7 +41,12 @@ class Params:
 
     # --- land ---------------------------------------------------------------
     land_cash_reserve: float = 1200.0  # cash to keep spare after buying a quadrant
-    last_land_day: int = 22           # past this, new land cannot pay for itself
+    # Measured, not guessed: 18 and 19 score bit-identically to 22 (no quadrant is ever
+    # bought after day 18), so the binding cut is the *last* purchase — the $4k SE quadrant
+    # around day 16-18. Blocking it is worth +1,285 (both seats, 48 episodes), because a
+    # quadrant that late cannot be filled and worked before the season ends. 12 is worse
+    # than 15: it starts blocking expansion that does still pay back.
+    last_land_day: int = 15
     land_empty_threshold: int = 6     # only expand when this few tiles are still empty
 
     # --- selling ------------------------------------------------------------

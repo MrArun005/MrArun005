@@ -6,9 +6,14 @@ if it beats the incumbent by more than the noise floor, repeat until a full pass
 nothing. Deliberately not a fancy optimizer — with ~2.5s per episode and a noisy reactive
 market, the budget goes into *episodes per candidate*, not into search cleverness.
 
-Every candidate is scored on the same seed set as the incumbent (paired), and a win has
-to clear `--sigma` paired standard errors to be accepted. Without that gate you spend the
-afternoon ratcheting on noise.
+Every candidate is scored on the same seed set as the incumbent (paired), and a win must
+clear BOTH `--sigma` paired standard errors and an absolute effect floor
+(`--min-effect-frac`, default 0.5% of the baseline mean). Significance alone is not enough:
+episodes are deterministic given a seed, so a change that nudges every episode identically
+has a near-zero standard error and clears any sigma gate on a +5 coin difference.
+
+Whatever this search produces, validate it **out of sample** — on seeds it never saw — before
+shipping. Coordinate descent over ~28 knobs on 8 seeds can memorise the seed set.
 
     python tune.py --episodes 8 --sigma 1.5
     python tune.py --episodes 8 --opponent self      # self-play: contests the market
@@ -32,6 +37,8 @@ GRID: dict[str, list] = {
     "sell_chunk":            [2, 3, 5, 8, 12],
     "max_hands":             [8, 11, 14, 17, 20],
     "hands_per_tile":        [0.08, 0.11, 0.14, 0.18, 0.24],
+    "max_hire_cost":         [55.0, 89.0, 144.0, 233.0, 400.0],
+    "final_dump_turns":      [2, 3, 6, 12],
     "move_cost":             [0.4, 0.6, 0.9, 1.4, 2.0],
     "seed_buffer":           [12, 20, 30, 45],
     "land_empty_threshold":  [3, 6, 12, 20, 999],
@@ -76,23 +83,34 @@ def score(params: Params, seeds: list[int], opponent: str, pool, both_seats: boo
     return list(pool.map(_score_one, jobs))
 
 
-def _verdict(candidate: list[float], incumbent: list[float], sigma: float):
+def _verdict(candidate: list[float], incumbent: list[float], sigma: float,
+             min_effect: float = 0.0):
+    """Accept only wins that are both statistically real and worth having.
+
+    The significance gate alone is not enough. Episodes are deterministic given a seed, so a
+    change that shifts every episode by the same tiny amount has a near-zero paired standard
+    error and clears any sigma threshold — this search accepted a +5 coin change on a 69,000
+    baseline at 1.7 sigma. Ratcheting through dozens of those fits the seed set, not the game,
+    so a win must also clear an absolute effect floor.
+    """
     diffs = [c - b for c, b in zip(candidate, incumbent)]
     delta = statistics.fmean(diffs)
     se = statistics.stdev(diffs) / len(diffs) ** 0.5 if len(diffs) > 1 else 0.0
-    return delta, se, delta > sigma * se and delta > 0
+    return delta, se, delta > sigma * se and delta > max(0.0, min_effect)
 
 
 def tune(episodes=8, seed=0, opponent="starter", sigma=1.5, passes=2, both_seats=False,
-         only: list[str] | None = None, workers=4):
+         only: list[str] | None = None, workers=4, min_effect_frac=0.005):
     seeds = [seed + i for i in range(episodes)]
     best = _load()
     keys = [k for k in GRID if not only or k in only]
 
     with ProcessPoolExecutor(max_workers=workers) as pool:
         base_scores = score(best, seeds, opponent, pool, both_seats)
+        min_effect = min_effect_frac * abs(statistics.fmean(base_scores))
         print(f"start  mean {statistics.fmean(base_scores):>10,.0f}  "
-              f"(n={len(base_scores)}, opponent={opponent})\n")
+              f"(n={len(base_scores)}, opponent={opponent}, "
+              f"need >{sigma}sigma and >{min_effect:,.0f})\n")
 
         for p_no in range(passes):
             improved = False
@@ -103,7 +121,7 @@ def tune(episodes=8, seed=0, opponent="starter", sigma=1.5, passes=2, both_seats
                         continue
                     cand = replace(best, **{key: value})
                     cand_scores = score(cand, seeds, opponent, pool, both_seats)
-                    delta, se, win = _verdict(cand_scores, base_scores, sigma)
+                    delta, se, win = _verdict(cand_scores, base_scores, sigma, min_effect)
                     flag = "ACCEPT" if win else "      "
                     print(f"{flag} {key:<24} {str(current):>8} -> {str(value):<8} "
                           f"delta {delta:>+9,.0f} ± {se:>7,.0f}")
@@ -145,6 +163,8 @@ if __name__ == "__main__":
     ap.add_argument("--both-seats", action="store_true")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--only", nargs="*", help="restrict the search to these params")
+    ap.add_argument("--min-effect-frac", type=float, default=0.005,
+                    help="minimum win as a fraction of baseline mean (effect-size floor)")
     args = ap.parse_args()
     tune(args.episodes, args.seed, args.opponent, args.sigma, args.passes,
-         args.both_seats, args.only, args.workers)
+         args.both_seats, args.only, args.workers, args.min_effect_frac)

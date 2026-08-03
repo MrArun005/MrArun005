@@ -3,10 +3,11 @@ Prioritized rule engine for Kaggriculture.
 
 Three independent decisions per turn, in this order:
 
-  1. `market_plan`  — orders (sell / hire / seeds / land). Free: costs no unit actions.
+  1. `market_plan`  — orders (sell / hire / livestock / seeds / land). Free: no unit actions.
   2. `build_tasks`  — scan the farm, emit one prioritized task per tile that wants work.
-  3. `assign`       — greedily match units to tasks by `priority - move_cost * distance`,
-                      then emit either the op (already standing there) or a step toward it.
+  3. `assign`       — greedily match units to tasks by value per turn,
+                      `priority / (1 + move_cost * distance)`, then emit either the op
+                      (already standing there) or one step toward it.
 
 Every magic number lives in `Params` so `tune.py` can search them without touching logic.
 
@@ -19,7 +20,7 @@ market side is a price-gated dribbler.
 from dataclasses import dataclass, asdict
 
 from env_adapter import (
-    ANIMALS, BASE_PRICE, CROPS, LAND_PRICES, PRODUCTS, SELLABLE,
+    ANIMALS, BASE_PRICE, CROPS, SELLABLE,
     Action, Observation, Tile, hire_cost, walk_map, water_window_start,
 )
 
@@ -33,6 +34,7 @@ class Params:
     # --- labour -------------------------------------------------------------
     hands_per_tile: float = 0.11      # target hands per unlocked tile
     max_hands: int = 14               # hard cap on hands hired per day
+    max_hire_cost: float = 144.0      # skip a hire once fib(n) exceeds a hand's day of work
     hire_until_hour: int = 4          # only hire early; a late hand has few turns left
     max_hires_per_turn: int = 6       # HIREs are one market order each (cap 10/turn)
     hire_cash_reserve: float = 60.0   # keep this much after paying for the day's hands
@@ -46,11 +48,13 @@ class Params:
     sell_min_frac: float = 0.72       # sell only while price >= frac * base
     sell_min_frac_pressure: float = 0.28   # relaxed gate when the shed is filling up
     shed_pressure_frac: float = 0.50  # shed fullness that triggers the relaxed gate
-    sell_chunk: int = 3               # units per product per turn (dribble, don't dump)
-    dump_turns: int = 26              # turns_remaining <= this -> liquidate everything
+    shed_force_frac: float = 0.85     # shed fullness that ignores the price gate entirely
+    sell_chunk: int = 8               # units per product per turn (dribble, don't dump)
+    dump_turns: int = 26              # turns_remaining <= this -> start liquidating
+    final_dump_turns: int = 3         # last N turns: sell everything regardless of price
 
     # --- planting -----------------------------------------------------------
-    seed_buffer: int = 30             # seeds to keep queued for the chosen crop
+    seed_buffer: int = 12             # seeds to keep queued for the chosen crop
     seed_cash_reserve: float = 120.0
     melon_tile_cap: int = 24          # tiles of melon before rotating to the next crop
     melon_bias: float = 1.0           # thumb on the scale per crop, for tuning
@@ -70,7 +74,7 @@ class Params:
     prio_dig: float = 22.0
     prio_haul: float = 12.0
 
-    move_cost: float = 0.9            # walk-distance weight in the value/turn ratio
+    move_cost: float = 0.4            # walk-distance weight in the value/turn ratio
     haul_threshold: int = 14           # carry this much before making a shed trip
 
     # --- livestock ----------------------------------------------------------
@@ -107,6 +111,9 @@ class Task:
     # access tiles so any unit can take the nearest one, but the errand itself only needs
     # doing once — the group stops four units all running to the shed for one job.
     group: str | None = None
+    # Unit this task belongs exclusively to (shed trips are per-unit: only the unit holding
+    # the produce can usefully drop it).
+    owner: int | None = None
 
     @property
     def pos(self) -> tuple[int, int]:
@@ -367,14 +374,19 @@ def target_hands(obs: Observation, p: Params) -> int:
     """How many hands today, from workload and affordability."""
     workable = sum(1 for t in obs.tiles if t.state != "LOCKED")
     want = min(p.max_hands, int(round(workable * p.hands_per_tile)))
-    # Walk the fib ladder and stop where the day's wage bill stops being affordable.
+    # Walk the fib ladder and stop on the first hire that is either unaffordable or simply
+    # not worth it. The marginal-cost cap matters more than the affordability one: a hand
+    # produces at most ~23 actions, worth roughly $300 at our realised $/action, but the
+    # 14th hire alone costs $377 and the 15th $610. Measured, 14 hands scores ~11k *worse*
+    # than 11 — the extra hands are bought with money and paid for in nothing.
     budget = obs.cash - p.hire_cash_reserve
     spent = 0.0
     allowed = obs.hires_today
     while allowed < want:
-        spent += hire_cost(allowed, obs.hire_mult)
-        if spent > budget:
+        cost = hire_cost(allowed, obs.hire_mult)
+        if cost > p.max_hire_cost or spent + cost > budget:
             break
+        spent += cost
         allowed += 1
     return allowed
 
@@ -383,8 +395,15 @@ def sell_orders(obs: Observation, p: Params) -> list[list]:
     """Price-gated dribble. Bulk sells walk their own price down; town demand refills
     the gap between turns, so many small sells beat one big one."""
     liquidating = obs.turns_remaining <= p.dump_turns
-    pressured = obs.shed_used >= obs.shed_capacity * p.shed_pressure_frac
-    gate = p.sell_min_frac_pressure if pressured else p.sell_min_frac
+    if obs.shed_used >= obs.shed_capacity * p.shed_force_frac:
+        # Overflow at the end-of-day dump is *destroyed*, so a sale at the $1 floor still
+        # beats holding for a better price. Diagnostics had the shed pinned at 100/100,
+        # which means produce was being thrown away while the price gate held firm.
+        gate = 0.0
+    elif obs.shed_used >= obs.shed_capacity * p.shed_pressure_frac:
+        gate = p.sell_min_frac_pressure
+    else:
+        gate = p.sell_min_frac
 
     reserve = 0 if liquidating else wheat_feed_reserve(obs, p)
 
@@ -397,7 +416,14 @@ def sell_orders(obs: Observation, p: Params) -> list[list]:
         if have <= 0:
             continue
         if liquidating:
-            orders.append(["SELL", item, have])
+            # Spread the liquidation over the turns that are left instead of dumping in
+            # one order. Clearing is per-unit lockstep, so a single SELL of everything
+            # walks its own price down once per unit — and town demand still drains
+            # supply between turns, which a one-shot dump throws away. Only the last few
+            # turns sell unconditionally, because unsold stock scores zero.
+            turns = max(1, obs.turns_remaining)
+            qty = have if turns <= p.final_dump_turns else max(p.sell_chunk, -(-have // turns))
+            orders.append(["SELL", item, min(have, qty)])
         elif obs.price_frac(item) >= gate:
             orders.append(["SELL", item, min(have, p.sell_chunk)])
     return orders
@@ -562,7 +588,8 @@ def haul_tasks(obs: Observation, p: Params, unit_idx: int, carrying: int) -> lis
     if not final_day and carrying < p.haul_threshold:
         return []
     prio = p.prio_haul_final if final_day else p.prio_haul
-    return [Task(x, y, ["DROP"], prio, "haul") for (x, y) in obs.shed_access]
+    return [Task(x, y, ["DROP"], prio, "haul", owner=unit_idx, group=f"haul:{unit_idx}")
+            for (x, y) in obs.shed_access]
 
 
 # --- assignment -------------------------------------------------------------
@@ -577,21 +604,14 @@ def assign(obs: Observation, p: Params, tasks: list[Task], plants_allowed: int =
     maps = {u.idx: walk_map(obs, u.pos) for u in obs.units}
 
     all_tasks = list(tasks)
-    per_unit_offset = len(all_tasks)
-    unit_haul: dict[int, range] = {}
     for unit in obs.units:
-        hauls = haul_tasks(obs, p, unit.idx, unit.carrying())
-        unit_haul[unit.idx] = range(per_unit_offset, per_unit_offset + len(hauls))
-        all_tasks.extend(hauls)
-        per_unit_offset += len(hauls)
+        all_tasks.extend(haul_tasks(obs, p, unit.idx, unit.carrying()))
 
     pairs = []
     for unit in obs.units:
         reach = maps[unit.idx]
         for t_idx, task in enumerate(all_tasks):
-            # A unit's private haul tasks are not available to anybody else.
-            owner = next((idx for idx, rng in unit_haul.items() if t_idx in rng), None)
-            if owner is not None and owner != unit.idx:
+            if task.owner is not None and task.owner != unit.idx:
                 continue
             if task.requires and unit.inventory.get(task.requires, 0) <= 0:
                 continue

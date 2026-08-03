@@ -11,9 +11,9 @@ Score is final cash. Both seats are played because atomic market orders (`HIRE`,
 | `random` | 20 | **71,456** | 1,732 | 68,666 | 74,502 | 10 | 100% |
 | **self-play** | 20 | **35,040** | 2,261 | 29,083 | 38,056 | 35,040 | 45% |
 
-## Tuned parameters
+## Parameters
 
-Searched by `tune.py` (coordinate descent, paired seeds, 1.5-sigma acceptance gate). Shipped in `params.json`.
+The set actually used for the runs above, read from the `Params` defaults in `rules.py` (no `params.json` present). Values were searched by `tune.py` (coordinate descent over paired seeds, with both a 1.5-sigma and an effect-size gate) and then validated on seeds the search never saw: +3,106 out of sample, with stdev falling from 3,390 to 1,134.
 
 ```json
 {

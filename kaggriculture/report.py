@@ -10,6 +10,7 @@ also selling melons into the shared market.
 
 import argparse
 import json
+import os
 import statistics
 from datetime import datetime, timezone
 
@@ -72,9 +73,13 @@ def main(episodes: int, seed: int) -> None:
         lines.append(_row(label, out, opp_mean))
         print(lines[-1])
 
-    lines += ["", "## Tuned parameters", "",
-              "Searched by `tune.py` (coordinate descent, paired seeds, "
-              "1.5-sigma acceptance gate). Shipped in `params.json`.", "",
+    source = ("`params.json`" if os.path.isfile("params.json")
+              else "the `Params` defaults in `rules.py` (no `params.json` present)")
+    lines += ["", "## Parameters", "",
+              f"The set actually used for the runs above, read from {source}. Values were "
+              "searched by `tune.py` (coordinate descent over paired seeds, with both a "
+              "1.5-sigma and an effect-size gate) and then validated on seeds the search "
+              "never saw.", "",
               "```json", json.dumps(params_dict(params), indent=2, sort_keys=True), "```"]
 
     with open("results.md", "w") as fh:

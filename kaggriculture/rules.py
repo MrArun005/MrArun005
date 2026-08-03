@@ -48,6 +48,8 @@ class Params:
     # than 15: it starts blocking expansion that does still pay back.
     last_land_day: int = 15
     land_empty_threshold: int = 6     # only expand when this few tiles are still empty
+    land_lead_days: int = 5           # days needed to fill a new quadrant before its crop cycle
+    tiles_per_unit: float = 7.0       # tiles one unit can keep tended per day
 
     # --- selling ------------------------------------------------------------
     sell_min_frac: float = 0.85       # sell only while price >= frac * base
@@ -60,6 +62,7 @@ class Params:
 
     # --- planting -----------------------------------------------------------
     seed_buffer: int = 12             # seeds to keep queued for the chosen crop
+    tiles_per_shed_slot: float = 1.0  # planted tiles allowed per unit of shed capacity
     seed_cash_reserve: float = 120.0
     melon_tile_cap: int = 24          # tiles of melon before rotating to the next crop
     melon_bias: float = 1.0           # thumb on the scale per crop, for tuning
@@ -96,7 +99,11 @@ class Params:
     feed_reserve_days: float = 2.0    # days of wheat to hold back from selling per animal
     wheat_pickup_batch: int = 6       # wheat carried per shed trip
     max_pickup_tasks: int = 2         # don't send the whole crew to the shed at once
+    prio_feed_relaxed: float = 72.0      # not fed yet, but not yet at risk of escaping
+    prio_animal_harvest_partial: float = 33.0  # product waiting, but below max_held
+    build_ahead_frac: float = 0.75      # build pens at this fraction of the animal reserve
     prio_pickup: float = 108.0
+    prio_place_animal_pickup: float = 102.0
     prio_build: float = 46.0
     prio_place_animal: float = 100.0  # a bought animal earns nothing sitting in the shed
 
@@ -153,9 +160,11 @@ def _bias(p: Params, crop: str) -> float:
 def crop_value(obs: Observation, p: Params, crop: str) -> float:
     """Expected coins per tile per day, at current market price.
 
-    Using the *live* price is what makes the agent contrarian without any explicit
-    crash rule: once we have flooded melon, melon's value falls below carrot's and
-    plantings rotate on their own.
+    The live price does *less* work here than it looks. Melon only falls below carrot when
+    `(6p - 80)/10 < 28.3`, i.e. below **$60 a melon** — by which point most of the margin is
+    already gone. So price feedback is a backstop, not the mechanism; `melon_tile_cap` is
+    what actually bounds melon. Kept because it correctly handles the endgame (crops that
+    cannot mature score -inf) and rotates away from a genuinely collapsed market.
     """
     c = CROPS[crop]
     if c["ongoing"]:
@@ -198,6 +207,17 @@ def choose_crop(obs: Observation, p: Params) -> str | None:
     return best
 
 
+def active_tile_cap(obs: Observation, p: Params) -> int:
+    """Most tiles worth having in the ground, given how much the shed can absorb.
+
+    Produce that overflows the shed at the end-of-day dump is destroyed, so planting past
+    what can be stored and sold burns seeds and unit-turns for nothing. At the default
+    `shedCapacity` of 100 this never binds (a 10x10 farm has at most 100 tiles); it exists
+    so a smaller shed scales the whole operation down instead of running at a loss.
+    """
+    return max(1, int(obs.shed_capacity * p.tiles_per_shed_slot))
+
+
 def plant_budget(obs: Observation, p: Params, crop: str | None) -> int:
     """How many PLANT ops may be issued this turn.
 
@@ -207,7 +227,12 @@ def plant_budget(obs: Observation, p: Params, crop: str | None) -> int:
     """
     if crop is None:
         return 0
-    return min(obs.seeds.get(crop, 0), sum(1 for t in obs.tiles if t.state == "EMPTY"))
+    planted = sum(1 for t in obs.tiles if t.state == "PLANT")
+    return min(
+        obs.seeds.get(crop, 0),
+        sum(1 for t in obs.tiles if t.state == "EMPTY"),
+        max(0, active_tile_cap(obs, p) - planted),
+    )
 
 
 # --- livestock --------------------------------------------------------------
@@ -302,7 +327,7 @@ def _structure_tasks(obs: Observation, p: Params, empty: list[Tile]) -> list[Tas
     # Don't fence off tiles for animals we cannot afford yet — an empty pen is a tile that
     # grows nothing, and it blocks the melon rotation that pays for the animal.
     waiting = any(obs.shed.get(n, 0) for n in ANIMALS)
-    if not waiting and obs.cash < p.animal_cash_reserve * 0.75:
+    if not waiting and obs.cash < p.animal_cash_reserve * p.build_ahead_frac:
         return []
     census = livestock_census(obs)
     need = {"PASTURE": 0, "COOP": 0}
@@ -355,7 +380,7 @@ def _pickup_tasks(obs: Observation, p: Params) -> list[Task]:
         if in_shed <= 0 or carried.get(name, 0) >= in_shed:
             continue
         for (x, y) in obs.shed_access:
-            tasks.append(Task(x, y, ["PICKUP", name, 1], p.prio_place_animal + 2,
+            tasks.append(Task(x, y, ["PICKUP", name, 1], p.prio_place_animal_pickup,
                               "pickup", group=f"get:{name}"))
 
     unfed = sum(1 for t in obs.tiles if t.state == "ANIMAL" and not t.fed_today)
@@ -374,6 +399,25 @@ def _pickup_tasks(obs: Observation, p: Params) -> list[Task]:
 
 
 # --- market -----------------------------------------------------------------
+
+def affordable_hands(obs: Observation, p: Params, workable: int) -> int:
+    """Hands we could put in the field today for a farm of `workable` tiles.
+
+    Split out from `target_hands` so the land decision can ask "could we even staff the
+    quadrant we are about to buy?" — the answer depends on `farmHandCostMult`, which is why
+    an absolute tile threshold cannot express it.
+    """
+    want = min(p.max_hands, int(round(workable * p.hands_per_tile)))
+    budget = obs.cash - p.hire_cash_reserve
+    spent, allowed = 0.0, 0
+    while allowed < want:
+        cost = hire_cost(allowed, obs.hire_mult)
+        if cost > p.max_hire_cost or spent + cost > budget:
+            break
+        spent += cost
+        allowed += 1
+    return allowed
+
 
 def target_hands(obs: Observation, p: Params) -> int:
     """How many hands today, from workload and affordability."""
@@ -401,9 +445,10 @@ def sell_orders(obs: Observation, p: Params) -> list[list]:
     the gap between turns, so many small sells beat one big one."""
     liquidating = obs.turns_remaining <= p.dump_turns
     if obs.shed_used >= obs.shed_capacity * p.shed_force_frac:
-        # Overflow at the end-of-day dump is *destroyed*, so a sale at the $1 floor still
-        # beats holding for a better price. Diagnostics had the shed pinned at 100/100,
-        # which means produce was being thrown away while the price gate held firm.
+        # Overflow at the end-of-day dump is *destroyed*, so a sale at the $1 floor beats
+        # holding out. Measured caveat: at the default shedCapacity of 100 this branch never
+        # changes an outcome — the 0.28 pressure gate below already clears everything it
+        # would. It earns its keep only on a small shed, where the gap matters.
         gate = 0.0
     elif obs.shed_used >= obs.shed_capacity * p.shed_pressure_frac:
         gate = p.sell_min_frac_pressure
@@ -442,8 +487,14 @@ def hire_orders(obs: Observation, p: Params) -> list[list]:
 
 
 def plantable_now(obs: Observation, p: Params, crop: str) -> int:
-    """Empty tiles we would actually commit to this crop, respecting its tile cap."""
-    empty = sum(1 for t in obs.tiles if t.state == "EMPTY")
+    """Empty tiles we would actually commit to this crop, respecting its caps.
+
+    Kept in step with `plant_budget` on purpose: buying seeds for tiles the budget will
+    refuse to plant just converts cash into dead stock.
+    """
+    planted = sum(1 for t in obs.tiles if t.state == "PLANT")
+    empty = min(sum(1 for t in obs.tiles if t.state == "EMPTY"),
+                max(0, active_tile_cap(obs, p) - planted))
     if crop == "MELON":
         empty = min(empty, max(0, p.melon_tile_cap - crop_tile_counts(obs).get("MELON", 0)))
     return empty
@@ -476,6 +527,25 @@ def land_orders(obs: Observation, p: Params) -> list[list]:
     """
     price = obs.next_land_price()
     if price is None or obs.day > p.last_land_day:
+        return []
+    # Season-relative guard. `last_land_day` is an absolute day and so says nothing in a
+    # short season: on a 240-step episode every day is <= 15, so the farm kept buying
+    # quadrants it could never fill and finished below its opening bank. New tiles have to be
+    # planted and then grown, so require a full crop cycle plus fill time to remain.
+    # By construction this cannot relax the validated 720-step behaviour: at day <= 15 there
+    # are >= 15 days left, already more than melon's 10-day cycle plus lead.
+    crop = choose_crop(obs, p)
+    if crop is None or obs.days_remaining < harvest_age(crop) + p.land_lead_days:
+        return []
+    # Labour gate: could the crew we can actually afford service the enlarged farm? Hands are
+    # the scarce input, and their cost scales with `farmHandCostMult`, so a tile threshold
+    # cannot capture this. With expensive hands the farm bought a quadrant it could not staff
+    # and finished below the opening bank — worse than doing nothing at all.
+    quadrant = (obs.board_size // 2) ** 2
+    workable = sum(1 for t in obs.tiles if t.state != "LOCKED")
+    worked = sum(1 for t in obs.tiles if t.state in ("PLANT", "ANIMAL"))
+    crew = 1 + affordable_hands(obs, p, workable + quadrant)
+    if worked + quadrant > crew * p.tiles_per_unit:
         return []
     if obs.cash < price + p.land_cash_reserve:
         return []
@@ -538,14 +608,14 @@ def _animal_task(obs: Observation, p: Params, tile: Tile) -> Task | None:
     if a is None:
         return None
     if not tile.fed_today:
-        prio = p.prio_feed_critical if tile.consecutive_unfed >= 1 else p.prio_feed_critical * 0.6
+        prio = p.prio_feed_critical if tile.consecutive_unfed >= 1 else p.prio_feed_relaxed
         return Task(tile.x, tile.y, ["FEED"], prio, "feed", requires="WHEAT")
     if tile.yield_units >= a["max_held"]:
         return Task(tile.x, tile.y, ["HARVEST"], p.prio_animal_harvest, "harvest")
     if not tile.cared_today:
         return Task(tile.x, tile.y, ["CARE"], p.prio_animal_care, "care")
     if tile.yield_units > 0:
-        return Task(tile.x, tile.y, ["HARVEST"], p.prio_animal_harvest * 0.6, "harvest")
+        return Task(tile.x, tile.y, ["HARVEST"], p.prio_animal_harvest_partial, "harvest")
     return None
 
 

@@ -120,14 +120,19 @@ def test_alternate_configs() -> None:
         cfg = dict(cfg, seed=5)
         env = make("kaggriculture", configuration=cfg, debug=True)
         players = ["main.py", "starter"] if seat == 0 else ["starter", "main.py"]
+        start = cfg.get("startingMoney", 3000)
         try:
             env.run(players)
             reward = env.steps[-1][seat].reward
             status = env.steps[-1][seat].status
-            check(f"{label}: finished (score {reward:,.0f})",
-                  status == "DONE" and reward is not None and reward > 0, f"status={status}")
+            # `reward > 0` is far too weak: it passes while the agent burns 42% of the
+            # opening bank on seeds and wages it can never recoup. Farming must at minimum
+            # not destroy capital, whatever the configuration.
+            check(f"{label}: profitable (score {reward:,.0f} vs {start:,} start)",
+                  status == "DONE" and reward is not None and reward > start,
+                  f"status={status} reward={reward}")
         except Exception as exc:
-            check(f"{label}: finished", False, repr(exc))
+            check(f"{label}: profitable", False, repr(exc))
 
 
 def test_latency() -> None:

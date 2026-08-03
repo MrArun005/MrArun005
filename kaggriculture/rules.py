@@ -45,12 +45,12 @@ class Params:
     land_empty_threshold: int = 6     # only expand when this few tiles are still empty
 
     # --- selling ------------------------------------------------------------
-    sell_min_frac: float = 0.72       # sell only while price >= frac * base
+    sell_min_frac: float = 0.85       # sell only while price >= frac * base
     sell_min_frac_pressure: float = 0.28   # relaxed gate when the shed is filling up
     shed_pressure_frac: float = 0.50  # shed fullness that triggers the relaxed gate
     shed_force_frac: float = 0.85     # shed fullness that ignores the price gate entirely
     sell_chunk: int = 8               # units per product per turn (dribble, don't dump)
-    dump_turns: int = 26              # turns_remaining <= this -> start liquidating
+    dump_turns: int = 72              # turns_remaining <= this -> start liquidating
     final_dump_turns: int = 3         # last N turns: sell everything regardless of price
 
     # --- planting -----------------------------------------------------------
@@ -66,7 +66,7 @@ class Params:
     prio_feed_critical: float = 120.0
     prio_water_urgent: float = 95.0   # plant dies tonight if not watered
     prio_harvest_decay: float = 90.0  # losing a unit every other turn
-    prio_harvest_ready: float = 70.0
+    prio_harvest_ready: float = 55.0
     prio_water_bonus: float = 60.0    # inside the yield window
     prio_animal_harvest: float = 55.0
     prio_animal_care: float = 40.0
@@ -75,7 +75,7 @@ class Params:
     prio_haul: float = 12.0
 
     move_cost: float = 0.4            # walk-distance weight in the value/turn ratio
-    haul_threshold: int = 14           # carry this much before making a shed trip
+    haul_threshold: int = 40           # carry this much before making a shed trip
 
     # --- livestock ----------------------------------------------------------
     # Animals sell into price curves that crop saturation never touches, which is the
@@ -88,7 +88,7 @@ class Params:
     feed_cash_floor: float = 150.0     # feeding outranks almost everything; buy wheat above this
     animals_per_turn: int = 2          # stagger purchases instead of dumping the bank
     last_animal_day: int = 21         # placed later than this, it never reaches first yield
-    feed_reserve_days: float = 3.0    # days of wheat to hold back from selling per animal
+    feed_reserve_days: float = 2.0    # days of wheat to hold back from selling per animal
     wheat_pickup_batch: int = 6       # wheat carried per shed trip
     max_pickup_tasks: int = 2         # don't send the whole crew to the shed at once
     prio_pickup: float = 108.0
@@ -518,6 +518,12 @@ def _plant_tile_task(obs: Observation, p: Params, tile: Tile) -> Task | None:
         return Task(tile.x, tile.y, ["WATER"], p.prio_water_urgent, "water")
     in_window = water_window_start(tile.crop) <= tile.age_days <= c["max_yield_day"]
     if in_window and tile.yield_units < c["max_yield"]:
+        # Tried and rejected: scaling this priority by the crop's unit price. One in-window
+        # watering adds exactly one harvestable unit and the window never returns, so a
+        # missed melon day looks like $250 lost for one op against ~$30 on wheat — but
+        # weighting it that way measured flat-to-negative over 14 out-of-sample seeds.
+        # Melon already wins on distance, and starving the cheap crops costs more than the
+        # melon it saves.
         return Task(tile.x, tile.y, ["WATER"], p.prio_water_bonus, "water")
     return None
 

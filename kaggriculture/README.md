@@ -7,11 +7,21 @@ reactive market**. Score is final cash. Nothing else counts.
 No RL, no ML, no frameworks. A prioritized rule engine plus a task dispatcher, ~700 lines of
 loops and conditionals, with every threshold searched by a local harness.
 
-| Agent | Mean final cash | vs baseline |
-| --- | --- | --- |
-| `pass` (built-in) | 3,000 | — |
-| `starter` (built-in carrot loop) | ~3,500 | 1.0× |
-| **this agent** | **see `results.md`** | **~20×** |
+Measured over 10 seeds × both seats per opponent (`results.md`, regenerate with `report.py`):
+
+| Matchup | Our mean | Stdev | Their mean | Win rate |
+| --- | --- | --- | --- | --- |
+| vs `pass` (built-in) | **71,938** | 1,865 | 3,000 | 100% |
+| vs `starter` (built-in carrot loop) | **71,645** | 1,870 | 3,497 | 100% |
+| vs `random` (built-in) | **71,456** | 1,732 | 10 | 100% |
+| **vs itself (self-play)** | **35,040** | 2,261 | 35,040 | 45% |
+
+**~20× the `starter` baseline, and never loses to a built-in.** But read the self-play row
+before believing the headline: against an opponent that also farms properly, the score
+*halves*. Both agents drain the same finite town demand, so revenue is split rather than
+doubled. The agent degrades gracefully rather than collapsing — the price gate keeps it from
+selling into a floor — but 72k is a number earned against passive opponents, and ~35k is what
+a contested market pays. Expect the leaderboard to sit closer to the latter.
 
 ---
 
@@ -25,14 +35,25 @@ loops and conditionals, with every threshold searched by a local harness.
 | `main.py` | Submission entry point. Thin, fail-soft, `agent` defined last |
 | `harness.py` | N-episode evaluation: mean, stdev, paired comparison |
 | `diagnose.py` | Single-episode instrumentation: where the money isn't coming from |
-| `tune.py` | Coordinate-descent threshold search, gated on paired significance |
-| `results.md` | Measured results and the tuned parameter set |
+| `tune.py` | Coordinate-descent threshold search, gated on significance *and* effect size |
+| `test_agent.py` | Submission safety suite — run before every submit |
+| `report.py` | Generates `results.md` |
+| `package.sh` | Runs the safety suite, then builds `submission.tar.gz` |
 
 ```bash
 pip install -U kaggle-environments
+python test_agent.py                          # submission safety checks
 python harness.py --episodes 30 --benchmark   # score vs every built-in
 python diagnose.py --seed 7                   # one episode, instrumented
 python tune.py --episodes 8 --sigma 1.5       # search thresholds
+./package.sh                                  # test + build submission.tar.gz
+```
+
+Submit as a tarball with `main.py` at the root — the loader puts the archive directory on
+`sys.path`, so the sibling modules import normally:
+
+```bash
+kaggle competitions submit kaggriculture -f submission.tar.gz -m "rule engine v1"
 ```
 
 ---
@@ -132,30 +153,81 @@ Kept here because the failures were more informative than the successes.
   escaped, and the restocking logic bought replacements that starved the same way. It also
   halved our unit-turns, because there was nothing left to hire hands with. Livestock only
   pays when it is bought out of *melon profit* and when feed is purchased *before* animals.
-  A modest 4 sheep + 2 cows then adds ~13%; 6 sheep + 4 cows is worse than none at all.
+- **`main.py` would not have loaded at all.** It used `os.path.dirname(__file__)` to find its
+  siblings, and Kaggle `exec`s the submission against a bare globals dict where `__file__`
+  does not exist. The agent worked perfectly under `import` and would have been rejected on
+  upload. `test_agent.py` now exercises the real `get_last_callable` path.
+
+## Two results that contradicted the analysis
+
+Worth recording because the numbers won and the reasoning lost.
+
+**More livestock is worse, even though wool and milk sell *above* base price.** Diagnostics
+show milk realising $254 against a $160 base and wool $249 against $200 — both are trading at
+*scarcity* prices, meaning town demand outruns our supply and there is clearly headroom. Yet
+6 sheep + 4 cows scores −7.9k against 4 + 2, and 8 + 8 scores −24k.
+
+My first explanation was a priority conflict: `prio_feed_critical` (120) outranks
+`prio_water_urgent` (95), so extra animals should pull the crew onto feed runs while crops go
+unwatered. Testing it refuted it — dropping feed priority below watering is **worse** again
+(−4.4k), because animals then miss two feeds and escape outright. The actual ceiling is
+plain action cost: roughly 4 unit-turns per animal per day (feed, care, harvest, and shed
+trips for wheat) out of a ~5,200-turn season, and past ~6 animals the marginal animal costs
+more in displaced farming than its product is worth. The revenue pool is real and
+unreachable — we cannot buy the actions to harvest it.
+
+**Value-weighting the watering priority did nothing.** A missed in-window watering costs
+exactly one harvestable unit and the window never returns, so skipping a melon looks like
+$250 lost for one op against ~$30 on wheat — an obvious case for scaling priority by unit
+price. Measured over 14 out-of-sample seeds it was flat to *negative*. Melon already wins the
+distance tiebreak often enough, and starving the cheap crops costs more than the melon it
+saves. The code was reverted; only the comment survives.
+
+**The hand-derived parameters were already near a local optimum.** A 28-parameter coordinate
+search moved the mean from 69.2k to 71.9k — about +4%. Only three accepted changes were worth
+more than a rounding error (`sell_chunk` 3→8, `move_cost` 0.9→0.4, `seed_buffer` 30→12).
+Everything that mattered came from reading the simulator, not from searching over it. The
+tuned set was then validated on 16 seeds the search never saw: **+3,106 out of sample**, and
+stdev down from 3,390 to 1,134 — it generalised and got steadier, so no overfit.
 
 ## Method
 
 Single-episode results are noise: the market is reactive, weeds spawn randomly, and the
 town-shop unlock order is random. Every change is judged by `harness.compare` on **paired
-seeds**, and accepted only if the delta clears ~2 paired standard errors. `tune.py` applies
-the same gate to every candidate — without it you spend the afternoon ratcheting on noise.
+seeds** — same seeds for both arms — and accepted only if the delta clears ~2 paired standard
+errors.
+
+Significance alone turned out not to be enough. Episodes are deterministic given a seed, so a
+change that nudges every episode by the same small amount has a near-zero paired standard
+error and clears any sigma gate: the search happily accepted a **+5 coin** change on a 69,000
+baseline at 1.7σ. `tune.py` now also requires an absolute effect floor, and whatever it
+produces is validated on **seeds it never saw** before shipping — coordinate descent over 28
+knobs on 8 seeds can memorise the seed set.
 
 `diagnose.py` exists because the harness only says *whether* something helped. The
 instrumentation — idle unit-turns, ops histogram, peak shed occupancy, realised price per
-product — is what said "55% of your turns are walking" and "the shed is pinned at its 100 cap,
-so you are destroying produce at every end-of-day".
+product — is what said "55% of your turns are walking", "the shed is pinned at its 100 cap, so
+you are destroying produce at every end-of-day", and "wool is selling above base, so the
+constraint is not the market".
 
 ## Known limits
 
-- **Tuned against `starter`, which sells only carrots.** A real opponent contests the melon
-  and wool pools, which lowers realised prices for both players. `tune.py --opponent self`
-  runs self-play to check the tuned parameters are not exploiting a passive market.
+- **Tuned against `starter`, which sells only carrots.** The thresholds were searched in an
+  uncontested market, and self-play shows the environment is very different when it isn't.
+  `tune.py --opponent self` re-runs the search under contention; that is the obvious next
+  move and it was not done here.
 - **No opponent modelling.** Opponent tiles and cash are fully visible in the observation, so
-  their melon pipeline is countable ~10 days ahead of the glut. Selling into that before they
-  harvest is a real, unexploited edge.
+  their melon pipeline is countable ~10 days before it hits the market. Given that self-play
+  halves revenue, selling ahead of a visible glut is the largest single unexploited edge left.
+- **Livestock revenue is visible but unreachable.** Wool and milk trade *above* base price,
+  meaning town demand is unmet, but every extra animal costs ~4 unit-turns a day and past ~6
+  animals the displaced farming is worth more. Only a cheaper source of actions would unlock
+  it, and hands are already priced out by the fib ladder at ~11.
 - **Fertilizer is unused.** `COLLECT_FERTILIZER` yields 1/animal/day for free and fertilizing
   wheat lifts its yield from 4 to 6, but at ~2 actions per +$50 it loses to spending those
   actions on melon. Worth revisiting only if the action budget stops binding.
+- **Degrades badly with a small shed.** At `shedCapacity=10` the agent finishes *below* its
+  opening bank — seed and hire spending is not conditioned on how much produce can be stored.
+  The competition default is 100, so this is off-spec rather than urgent.
 - Seat 0 has a small structural edge (atomic orders resolve in player order). Use
   `--both-seats` when a result needs to be seat-independent.

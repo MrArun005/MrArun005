@@ -1,51 +1,78 @@
 """
 Submission entry point for the Kaggriculture competition.
 
-Kaggle resolves the entry point with `get_last_callable`, which takes the *last
-callable defined in this module*. So `agent` must stay at the bottom of the file —
-do not add functions below it.
+Two hard constraints imposed by how Kaggle loads this file, both verified against
+`kaggle_environments/agent.py`:
 
-Rules of the road for submissions:
-  - fail SOFT. An exception forfeits the episode; a bad-but-valid action just
-    scores poorly. Never let this raise.
-  - stay inside the per-turn budget (actTimeout = 1s, 60s total overage).
+  1. The entry point is resolved with `get_last_callable`, which takes the *last callable
+     defined in the module namespace*. So `agent` must stay at the bottom — do not add
+     functions below it.
+  2. The file is `exec`'d against a bare globals dict, so **`__file__` does not exist**.
+     Referencing it raises NameError at import and the submission is rejected outright.
+     The loader does append this file's directory to `sys.path` for the duration of the
+     module body, which is why the sibling imports below work and why they must happen at
+     import time rather than lazily inside `agent`.
+
+Rules of the road:
+  - fail SOFT. An exception forfeits the episode; a bad-but-valid action just scores
+    poorly. Never let `agent` raise.
+  - stay inside the per-turn budget (actTimeout = 1s, plus 60s of episode overage).
 
 Submit as a tar.gz so the sibling modules ride along:
-    tar -czf submission.tar.gz main.py env_adapter.py rules.py
+    tar -czf submission.tar.gz main.py env_adapter.py rules.py params.json
     kaggle competitions submit kaggriculture -f submission.tar.gz -m "..."
 """
 
 import os
 import sys
 
-# The loader appends this file's directory to sys.path only while the module body
-# executes, so sibling imports must happen at import time — not lazily inside agent().
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+def _candidate_dirs():
+    """Where our sibling files might live, best guess first.
+
+    `__file__` is read through `globals()` because it is genuinely absent under Kaggle's
+    exec-based loader; a direct reference is a NameError, not a fallback.
+    """
+    found, out = set(), []
+    here = globals().get("__file__")
+    for d in ([os.path.dirname(os.path.abspath(here))] if here else []) + list(sys.path) + [os.getcwd()]:
+        if d and d not in found:
+            found.add(d)
+            out.append(d)
+    return out
+
+
+_DIRS = [d for d in _candidate_dirs() if os.path.isfile(os.path.join(d, "env_adapter.py"))]
+for _d in reversed(_DIRS):
+    if _d not in sys.path:
+        sys.path.insert(0, _d)
 
 import env_adapter
 from rules import Params, decide
 
-PARAMS = Params()          # tune.py writes the searched values into params.json
-_PARAMS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "params.json")
 
-
-def _load_tuned_params() -> Params:
-    """Pick up tuned thresholds if tune.py has written them; defaults otherwise."""
-    try:
-        import json
-        with open(_PARAMS_FILE) as fh:
-            data = json.load(fh)
-        fields = {f for f in Params.__dataclass_fields__}
-        return Params(**{k: v for k, v in data.items() if k in fields})
-    except Exception:
-        return Params()
+def _load_tuned_params():
+    """Pick up tune.py's searched thresholds if they shipped; defaults otherwise."""
+    import json
+    for d in _DIRS or _candidate_dirs():
+        path = os.path.join(d, "params.json")
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path) as fh:
+                data = json.load(fh)
+            fields = set(Params.__dataclass_fields__)
+            return Params(**{k: v for k, v in data.items() if k in fields})
+        except Exception:
+            break
+    return Params()
 
 
 PARAMS = _load_tuned_params()
 
 
-def _safe_action(observation) -> dict:
-    """A valid no-op sized to however many hands we currently have."""
+def _safe_action(observation):
+    """A valid no-op, sized to however many hands we currently have."""
     hands = 0
     try:
         player = observation.get("player", 0)

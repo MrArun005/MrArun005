@@ -45,6 +45,14 @@ GRID: dict[str, list] = {
     "prio_plant":            [25.0, 38.0, 55.0, 75.0],
     "prio_harvest_ready":    [55.0, 70.0, 90.0],
     "haul_threshold":        [6, 14, 40],
+    "target_sheep":          [0, 2, 4, 6, 9],
+    "target_cows":           [0, 2, 4, 6],
+    "target_geese":          [0, 2, 4],
+    "animal_cash_reserve":   [2000.0, 5000.0, 9000.0, 15000.0],
+    "feed_reserve_days":     [2.0, 3.0, 5.0],
+    "last_animal_day":       [14, 18, 21, 24],
+    "animals_per_turn":      [1, 2, 4],
+    "wheat_pickup_batch":    [3, 6, 10],
 }
 
 

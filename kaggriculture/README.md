@@ -11,17 +11,21 @@ Measured over 10 seeds × both seats per opponent (`results.md`, regenerate with
 
 | Matchup | Our mean | Stdev | Their mean | Win rate |
 | --- | --- | --- | --- | --- |
-| vs `pass` (built-in) | **73,227** | 2,146 | 3,000 | 100% |
-| vs `starter` (built-in carrot loop) | **73,320** | 2,075 | 3,497 | 100% |
-| vs `random` (built-in) | **72,856** | 2,268 | 4 | 100% |
-| **vs itself (self-play)** | **35,040** | 2,261 | 35,040 | 45% |
+| vs `pass` (built-in) | **72,953** | 1,598 | 3,000 | 100% |
+| vs `starter` (built-in carrot loop) | **73,023** | 1,428 | 3,497 | 100% |
+| vs `random` (built-in) | **73,012** | 1,599 | 0 | 100% |
+| **vs itself (self-play)** | **43,405** | 2,045 | 43,405 | 30%* |
 
 **~21× the `starter` baseline, and never loses to a built-in.** But read the self-play row
-before believing the headline: against an opponent that also farms properly, the score
-*halves*. Both agents drain the same finite town demand, so revenue is split rather than
+before believing the headline: against an opponent that also farms properly the score drops
+~40%, because both agents drain the same finite town demand and revenue is split rather than
 doubled. The agent degrades gracefully rather than collapsing — the price gate keeps it from
-selling into a floor — but 72k is a number earned against passive opponents, and ~35k is what
-a contested market pays. Expect the leaderboard to sit closer to the latter.
+selling into a floor — but 73k is earned against passive opponents, and ~43k is what a
+contested market pays. Expect the leaderboard nearer the latter.
+
+\* A mirror match caps at 50% by construction, and 4 of 10 seeds end in an *exact* tie
+(identical policies, symmetric board), which pushes the rate to 30%. It measures nothing
+about strength — the mean is the informative column.
 
 ---
 
@@ -226,8 +230,9 @@ constraint is not the market".
 - **Fertilizer is unused.** `COLLECT_FERTILIZER` yields 1/animal/day for free and fertilizing
   wheat lifts its yield from 4 to 6, but at ~2 actions per +$50 it loses to spending those
   actions on melon. Worth revisiting only if the action budget stops binding.
-- **Degrades badly with a small shed.** At `shedCapacity=10` the agent finishes *below* its
-  opening bank — seed and hire spending is not conditioned on how much produce can be stored.
-  The competition default is 100, so this is off-spec rather than urgent.
+- **Off-default configurations are guarded but not tuned.** Planting is capped by shed
+  capacity, land purchases require a crop cycle of season left plus a crew that can staff the
+  new quadrant, and every shipped configuration now finishes above its opening bank. The
+  thresholds behind those guards were chosen to fix a measured failure, not searched.
 - Seat 0 has a small structural edge (atomic orders resolve in player order). Use
   `--both-seats` when a result needs to be seat-independent.

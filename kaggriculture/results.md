@@ -6,10 +6,10 @@ Score is final cash. Both seats are played because atomic market orders (`HIRE`,
 
 | Opponent | Episodes | Our mean | Stdev | Min | Max | Their mean | Win rate |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `pass` | 20 | **73,227** | 2,146 | 68,576 | 76,131 | 3,000 | 100% |
-| `starter` | 20 | **73,320** | 2,075 | 68,817 | 75,431 | 3,497 | 100% |
-| `random` | 20 | **72,856** | 2,268 | 68,946 | 76,319 | 4 | 100% |
-| **self-play** | 20 | **35,040** | 2,261 | 29,083 | 38,056 | 35,040 | 45% |
+| `pass` | 20 | **72,953** | 1,598 | 69,052 | 75,302 | 3,000 | 100% |
+| `starter` | 20 | **73,023** | 1,428 | 69,566 | 74,675 | 3,497 | 100% |
+| `random` | 20 | **73,012** | 1,599 | 70,281 | 75,294 | 0 | 100% |
+| **self-play** | 20 | **43,405** | 2,045 | 39,866 | 46,320 | 43,405 | 30% |
 
 ## Parameters
 
@@ -19,6 +19,7 @@ The set actually used for the runs above, read from the `Params` defaults in `ru
 {
   "animal_cash_reserve": 5000.0,
   "animals_per_turn": 2,
+  "build_ahead_frac": 0.75,
   "carrot_bias": 1.0,
   "dump_turns": 72,
   "feed_cash_floor": 150.0,
@@ -30,6 +31,7 @@ The set actually used for the runs above, read from the `Params` defaults in `ru
   "hire_until_hour": 4,
   "land_cash_reserve": 1200.0,
   "land_empty_threshold": 6,
+  "land_lead_days": 5,
   "last_animal_day": 21,
   "last_land_day": 15,
   "max_hands": 14,
@@ -41,15 +43,18 @@ The set actually used for the runs above, read from the `Params` defaults in `ru
   "move_cost": 0.4,
   "prio_animal_care": 40.0,
   "prio_animal_harvest": 55.0,
+  "prio_animal_harvest_partial": 33.0,
   "prio_build": 46.0,
   "prio_dig": 22.0,
   "prio_feed_critical": 120.0,
+  "prio_feed_relaxed": 72.0,
   "prio_harvest_decay": 90.0,
   "prio_harvest_ready": 55.0,
   "prio_haul": 12.0,
   "prio_haul_final": 200.0,
   "prio_pickup": 108.0,
   "prio_place_animal": 100.0,
+  "prio_place_animal_pickup": 102.0,
   "prio_plant": 38.0,
   "prio_water_bonus": 60.0,
   "prio_water_urgent": 95.0,
@@ -63,6 +68,8 @@ The set actually used for the runs above, read from the `Params` defaults in `ru
   "target_cows": 2,
   "target_geese": 0,
   "target_sheep": 4,
+  "tiles_per_shed_slot": 1.0,
+  "tiles_per_unit": 7.0,
   "wheat_bias": 1.0,
   "wheat_pickup_batch": 6
 }

@@ -11,16 +11,16 @@ Measured over 10 seeds × both seats per opponent (`results.md`, regenerate with
 
 | Matchup | Our mean | Stdev | Their mean | Win rate |
 | --- | --- | --- | --- | --- |
-| vs `pass` (built-in) | **72,953** | 1,598 | 3,000 | 100% |
-| vs `starter` (built-in carrot loop) | **73,023** | 1,428 | 3,497 | 100% |
-| vs `random` (built-in) | **73,012** | 1,599 | 0 | 100% |
-| **vs itself (self-play)** | **43,405** | 2,045 | 43,405 | 30%* |
+| vs `pass` (built-in) | **77,040** | 2,158 | 3,000 | 100% |
+| vs `starter` (built-in carrot loop) | **77,855** | 1,811 | 3,496 | 100% |
+| vs `random` (built-in) | **77,547** | 1,448 | 0 | 100% |
+| **vs itself (self-play)** | **47,465** | 1,270 | 47,465 | 30%* |
 
-**~21× the `starter` baseline, and never loses to a built-in.** But read the self-play row
+**~22× the `starter` baseline, and never loses to a built-in.** But read the self-play row
 before believing the headline: against an opponent that also farms properly the score drops
 ~40%, because both agents drain the same finite town demand and revenue is split rather than
 doubled. The agent degrades gracefully rather than collapsing — the price gate keeps it from
-selling into a floor — but 73k is earned against passive opponents, and ~43k is what a
+selling into a floor — but 78k is earned against passive opponents, and ~47k is what a
 contested market pays. Expect the leaderboard nearer the latter.
 
 \* A mirror match caps at 50% by construction, and 4 of 10 seeds end in an *exact* tie
@@ -131,6 +131,11 @@ Three independent decisions per turn:
 That ratio was the second-biggest single win. Scoring pairs by `priority − move_cost · dist`
 instead let a distant high-priority task outbid work the unit was already standing on, and
 burned **55% of all unit-turns on walking**.
+
+Walking is still 48.6% of unit-turns and only 34.4% are productive ops, which looks like the
+obvious thing to fix — but it is measurably almost free. Making hands **cost nothing** and
+nearly doubling the crew is worth only **+2.6%**, and non-monotonically. Actions are not the
+binding constraint; market absorption is. Perfect routing would buy low single digits.
 
 Two mechanics force per-unit task eligibility, so tasks carry a `requires` field: `FEED`
 consumes wheat from the *acting unit's* inventory rather than the shed, and `PLACE` needs the

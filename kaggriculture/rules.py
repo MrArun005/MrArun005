@@ -49,6 +49,7 @@ class Params:
     last_land_day: int = 15
     land_empty_threshold: int = 6     # only expand when this few tiles are still empty
     land_lead_days: int = 5           # days needed to fill a new quadrant before its crop cycle
+    land_payback_mult: float = 1.5    # a quadrant must earn this multiple of its price
     tiles_per_unit: float = 7.0       # tiles one unit can keep tended per day
 
     # --- selling ------------------------------------------------------------
@@ -89,13 +90,19 @@ class Params:
     # Animals sell into price curves that crop saturation never touches, which is the
     # whole reason to bother: melon volume is capped by melon's own glut curve, so wool
     # and milk are additive revenue rather than a substitute.
-    target_sheep: int = 4             # WOOL, base $200, the best $/action of the three
-    target_cows: int = 2              # MILK, base $160
+    target_sheep: int = 5             # WOOL, base $200, the best $/action of the three
+    target_cows: int = 3              # MILK, base $160
     target_geese: int = 0             # EGG only $50; poor $/action, glut-proof though
-    animal_cash_reserve: float = 5000.0  # buy livestock out of melon profit, not seed capital
+    # Timing, not headcount, is what the wool/milk pools respond to. Dropping the buy
+    # threshold from $5,000 to $2,500 is worth +2,582 on its own: the labour gate freed the
+    # $2,000 SW quadrant, so the cash is there sooner, and an animal placed a few days earlier
+    # gets whole extra production cycles. Raising headcount instead is negative every time —
+    # 6 sheep, 8/4 and 12/6 all score worse. Measured out of sample, both seats.
+    animal_cash_reserve: float = 2500.0
     feed_cash_floor: float = 150.0     # feeding outranks almost everything; buy wheat above this
     animals_per_turn: int = 2          # stagger purchases instead of dumping the bank
     last_animal_day: int = 21         # placed later than this, it never reaches first yield
+    animal_lead_days: int = 6         # production days needed after first yield to repay the animal
     feed_reserve_days: float = 2.0    # days of wheat to hold back from selling per animal
     wheat_pickup_batch: int = 6       # wheat carried per shed trip
     max_pickup_tasks: int = 2         # don't send the whole crew to the shed at once
@@ -310,6 +317,12 @@ def animal_orders(obs: Observation, p: Params) -> list[list]:
     bought = 0
     for name, want in _wanted_animals(obs, p).items():
         if want <= 0 or bought >= p.animals_per_turn:
+            continue
+        # Season-relative payback, per species. `last_animal_day` is an absolute day and so
+        # says nothing in a short season — the same trap `last_land_day` fell into. A $500
+        # sheep that never reaches its first yield is a pure write-off, and buying at a $2,500
+        # threshold fires on turn 0 against a $3,000 opening bank.
+        if obs.days_remaining < ANIMALS[name]["first_yield_day"] + p.animal_lead_days:
             continue
         cost = ANIMALS[name]["cost"]
         n = min(want, p.animals_per_turn - bought, int(cash // cost))
@@ -546,6 +559,12 @@ def land_orders(obs: Observation, p: Params) -> list[list]:
     worked = sum(1 for t in obs.tiles if t.state in ("PLANT", "ANIMAL"))
     crew = 1 + affordable_hands(obs, p, workable + quadrant)
     if worked + quadrant > crew * p.tiles_per_unit:
+        return []
+    # Payback: quadrant *prices* are fixed at $1k/$2k/$4k but quadrant *size* scales with the
+    # board, so on a 6x6 farm those same thousands buy 9 tiles instead of 25 and can never
+    # earn out. Value the purchase at what the tiles can actually produce in the days left.
+    earns = quadrant * crop_value(obs, p, crop) * max(0, obs.days_remaining - p.land_lead_days)
+    if earns < price * p.land_payback_mult:
         return []
     if obs.cash < price + p.land_cash_reserve:
         return []

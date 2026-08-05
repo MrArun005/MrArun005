@@ -34,7 +34,11 @@ class Params:
     # --- labour -------------------------------------------------------------
     hands_per_tile: float = 0.11      # target hands per unlocked tile
     max_hands: int = 14               # hard cap on hands hired per day
-    max_hire_cost: float = 144.0      # skip a hire once fib(n) exceeds a hand's day of work
+    # 34, not the original 144: the cap almost never binds at normal hand prices (the
+    # hands_per_tile want stops at 8-9 first, and fib(9)=34 clears it), but at
+    # `farmHandCostMult` 20 it is the difference between 2 hands and 4+ — measured means
+    # 4,857 vs 2,946 over seeds 5-8 on the 240-step expensive-hands config.
+    max_hire_cost: float = 34.0       # skip a hire once its cost exceeds a hand's day of work
     hire_until_hour: int = 4          # only hire early; a late hand has few turns left
     max_hires_per_turn: int = 6       # HIREs are one market order each (cap 10/turn)
     hire_cash_reserve: float = 60.0   # keep this much after paying for the day's hands
@@ -50,7 +54,11 @@ class Params:
     land_empty_threshold: int = 6     # only expand when this few tiles are still empty
     land_lead_days: int = 5           # days needed to fill a new quadrant before its crop cycle
     land_payback_mult: float = 1.5    # a quadrant must earn this multiple of its price
-    tiles_per_unit: float = 7.0       # tiles one unit can keep tended per day
+    # 7.0 blocked the third quadrant on the standard config: by mid-game ~50 tiles are worked,
+    # the crew tops out around 9-10, and 50+25 > 9*7 vetoed the $2k SW purchase every episode.
+    # Replay analysis: every leaderboard agent that beat v1 held 3 quadrants by mid-game. The
+    # extra tiles are wheat and pens (cheap upkeep), not melon, so 9 tiles/unit is realistic.
+    tiles_per_unit: float = 9.0       # tiles one unit can keep tended per day
 
     # --- selling ------------------------------------------------------------
     sell_min_frac: float = 0.85       # sell only while price >= frac * base
@@ -90,9 +98,13 @@ class Params:
     # Animals sell into price curves that crop saturation never touches, which is the
     # whole reason to bother: melon volume is capped by melon's own glut curve, so wool
     # and milk are additive revenue rather than a substitute.
-    target_sheep: int = 5             # WOOL, base $200, the best $/action of the three
-    target_cows: int = 3              # MILK, base $160
-    target_geese: int = 0             # EGG only $50; poor $/action, glut-proof though
+    # Retargeted after replay analysis of leaderboard losses: every agent that beat v1 ran
+    # 8-11 animals against our 8, and every animal is also a daily FERTILIZER unit (~$100
+    # base, sellable — see SELLABLE). Eggs sell into a log glut curve (~$40 forever), so
+    # geese went from "poor $/action" to worth holding once their fertilizer is priced in.
+    target_sheep: int = 6             # WOOL, base $200, the best $/action of the three
+    target_cows: int = 6              # MILK, base $160
+    target_geese: int = 3             # EGG $50 but glut-proof, plus daily fertilizer
     # Timing, not headcount, is what the wool/milk pools respond to. Dropping the buy
     # threshold from $5,000 to $2,500 is worth +2,582 on its own: the labour gate freed the
     # $2,000 SW quadrant, so the cash is there sooner, and an animal placed a few days earlier
@@ -102,7 +114,9 @@ class Params:
     feed_cash_floor: float = 150.0     # feeding outranks almost everything; buy wheat above this
     animals_per_turn: int = 2          # stagger purchases instead of dumping the bank
     last_animal_day: int = 21         # placed later than this, it never reaches first yield
-    animal_lead_days: int = 6         # production days needed after first yield to repay the animal
+    # 7, not 6: at 6 a goose squeaks past the season gate in a 240-step episode (4+6 = exactly
+    # the 10 days remaining) and can never repay its coop, feed and care actions there.
+    animal_lead_days: int = 7         # production days needed after first yield to repay the animal
     feed_reserve_days: float = 2.0    # days of wheat to hold back from selling per animal
     wheat_pickup_batch: int = 6       # wheat carried per shed trip
     max_pickup_tasks: int = 2         # don't send the whole crew to the shed at once
@@ -113,6 +127,11 @@ class Params:
     prio_place_animal_pickup: float = 102.0
     prio_build: float = 46.0
     prio_place_animal: float = 100.0  # a bought animal earns nothing sitting in the shed
+    prio_collect_fert: float = 50.0   # one op nets a ~$100-base unit; just below a full harvest
+    # Fertilizer has no town drain, so its price never refills the way crops do — the standard
+    # 0.85 gate would permanently block sales once the price sags. Any sale above the walk
+    # cost is profit on a free byproduct, hence its own, much lower gate.
+    fert_sell_min_frac: float = 0.25
 
 
 @dataclass
@@ -244,8 +263,19 @@ def plant_budget(obs: Observation, p: Params, crop: str | None) -> int:
 
 # --- livestock --------------------------------------------------------------
 
-def animal_targets(p: Params) -> dict[str, int]:
-    return {"SHEEP": p.target_sheep, "COW": p.target_cows, "GOOSE": p.target_geese}
+def animal_targets(obs: Observation, p: Params) -> dict[str, int]:
+    """Headcount targets, scaled down for small boards and short seasons.
+
+    The defaults are sized for the standard 10x10, 30-day game. A 6x6 board has a third
+    of the tiles and a 240-step season a third of the production days — holding the full
+    herd there burns capital and unit actions that crops repay better.
+    """
+    scale = min(1.0,
+                (obs.board_size ** 2) / 100.0,
+                obs.total_days / 30.0)
+    return {"SHEEP": int(p.target_sheep * scale),
+            "COW": int(p.target_cows * scale),
+            "GOOSE": int(p.target_geese * scale)}
 
 
 def livestock_census(obs: Observation) -> dict:
@@ -265,7 +295,7 @@ def _wanted_animals(obs: Observation, p: Params) -> dict[str, int]:
     """Shortfall per species: target minus (placed + already bought)."""
     census = livestock_census(obs)
     out = {}
-    for name, target in animal_targets(p).items():
+    for name, target in animal_targets(obs, p).items():
         have = census["placed"].get(name, 0) + census["in_shed"].get(name, 0)
         out[name] = max(0, target - have)
     return out
@@ -344,7 +374,11 @@ def _structure_tasks(obs: Observation, p: Params, empty: list[Tile]) -> list[Tas
         return []
     census = livestock_census(obs)
     need = {"PASTURE": 0, "COOP": 0}
-    for name, target in animal_targets(p).items():
+    for name, target in animal_targets(obs, p).items():
+        # Same season-viability gate as the purchase logic: a pen for an animal that can
+        # no longer repay itself is a wasted build op and a tile that grows nothing.
+        if obs.days_remaining < ANIMALS[name]["first_yield_day"] + p.animal_lead_days:
+            continue
         structure = ANIMALS[name]["structure"]
         need[structure] += target
     for name, n in census["placed"].items():
@@ -487,7 +521,8 @@ def sell_orders(obs: Observation, p: Params) -> list[list]:
             turns = max(1, obs.turns_remaining)
             qty = have if turns <= p.final_dump_turns else max(p.sell_chunk, -(-have // turns))
             orders.append(["SELL", item, min(have, qty)])
-        elif obs.price_frac(item) >= gate:
+        elif obs.price_frac(item) >= (min(gate, p.fert_sell_min_frac)
+                                      if item == "FERTILIZER" else gate):
             orders.append(["SELL", item, min(have, p.sell_chunk)])
     return orders
 
@@ -631,6 +666,8 @@ def _animal_task(obs: Observation, p: Params, tile: Tile) -> Task | None:
         return Task(tile.x, tile.y, ["FEED"], prio, "feed", requires="WHEAT")
     if tile.yield_units >= a["max_held"]:
         return Task(tile.x, tile.y, ["HARVEST"], p.prio_animal_harvest, "harvest")
+    if tile.fertilizer_available:
+        return Task(tile.x, tile.y, ["COLLECT_FERTILIZER"], p.prio_collect_fert, "fert")
     if not tile.cared_today:
         return Task(tile.x, tile.y, ["CARE"], p.prio_animal_care, "care")
     if tile.yield_units > 0:

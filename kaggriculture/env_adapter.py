@@ -40,7 +40,10 @@ BASE_PRICE = {
     "EGG": 50, "MILK": 160, "WOOL": 200, "FERTILIZER": 100,
 }
 
-SELLABLE = [p for p in PRODUCTS if p != "FERTILIZER"]
+# The shipped README claims fertilizer is buy-only, but the simulator's SELL handler
+# accepts any item in PRODUCTS — verified against kaggriculture.py v0.1.0 (SELL branch),
+# and confirmed in leaderboard replays where top agents sell 100+ FERTILIZER per episode.
+SELLABLE = list(PRODUCTS)
 
 LAND_PRICES = [1000, 2000, 4000]
 

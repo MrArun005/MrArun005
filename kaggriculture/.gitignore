@@ -1,0 +1,9 @@
+.venv/
+replays/
+replays2/
+research/
+*.tar.gz
+*.log
+episode-*.json
+params.json
+__pycache__/

@@ -7,3 +7,7 @@ research/
 episode-*.json
 params.json
 __pycache__/
+local_*.json
+ab_*.json
+replays3/
+tune_v4.err

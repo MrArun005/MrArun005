@@ -70,7 +70,11 @@ class Params:
     # $3,000 goes into livestock (3 cows by day 3), and the day-15 cash gap decides games.
     # Land bought on day 0 delayed the herd and cost ~9k over the season.
     min_land_day: int = 4
-    land_empty_threshold: int = 6     # only expand when this few tiles are still empty
+    # 12, not 6: with the strawberry ramp consuming empties a few per day, the 6-empty
+    # trigger only fired on day 16 — one day after last_land_day closed the window — so the
+    # farm sat on 2 quadrants and $10-30k of idle cash all game while the clones work 3
+    # quadrants (75 tiles: 40 strawberry + 14 pens + endgame wheat) from day 12.
+    land_empty_threshold: int = 18    # only expand when this few tiles are still empty
     land_lead_days: int = 5           # days needed to fill a new quadrant before its crop cycle
     land_payback_mult: float = 1.5    # a quadrant must earn this multiple of its price
     # 7.0 blocked the third quadrant on the standard config: by mid-game ~50 tiles are worked,
@@ -96,17 +100,31 @@ class Params:
     seed_buffer: int = 12             # seeds to keep queued for the chosen crop
     tiles_per_shed_slot: float = 1.0  # planted tiles allowed per unit of shed capacity
     seed_cash_reserve: float = 120.0
-    # 16, not 24: melon has zero shop demand (town centre only) and a quadratic glut curve
-    # that hits the $1 floor near 158 net units. The converged public top-10 runs ~21 melon
-    # seeds against 44 strawberry; 24 tiles of melon is supply the market cannot absorb.
-    melon_tile_cap: int = 16          # tiles of melon before rotating to the next crop
+    # 13, tuner-confirmed (+5,973 ± 1,632 over 16, both neighbours worse: 10 is -8,328,
+    # 16 is -5,973; 16 paired self-play episodes each): melon has zero shop demand and a
+    # quadratic glut curve, so past ~13 tiles every extra melon mostly cannibalises the
+    # price of the ones already sold.
+    melon_tile_cap: int = 13          # tiles of melon before rotating to the next crop
     # Strawberry is the meta premium crop: 24 units/day of town demand once shops unlock and
     # it trades above base late-game. It is ongoing (4 productions, then the tile rots), so
     # waves must be staggered — the seed drip below plants a few per day instead of one death
     # cohort — and planted no later than it can still produce.
-    strawberry_tile_cap: int = 16
-    strawberry_last_day: int = 18
-    strawberry_seed_hour: int = 5     # buy its seeds only in the morning: ~a wave per day
+    # 44, not 16: measured from the top-2 replays (90153480/90154808) — the converged clone
+    # plants 44 strawberry seeds and executes 248-249 units against our 66. Planted by day 15
+    # a tile still fires 3-4 of its productions before the season ends.
+    strawberry_tile_cap: int = 44
+    # 17, not 15: the wave is cash-starved until the first melon harvest lands (~day 11-12),
+    # so most of the planting happens after it — cutting at 15 froze the farm at 15 tiles.
+    # A tile planted day 17 still fires 2 of its 4 productions (27 and 29), clearing the
+    # $100 seed at strawberry's ~$120+ price.
+    strawberry_last_day: int = 17
+    strawberry_ramp_day: int = 6      # from here strawberry outranks melon replants
+    # Hour 8, not 5: at 5 the drip paced ~3.2 tiles/day and the ramp topped out at 38 of
+    # 44 tiles before the last-day cutoff; three more buying hours reach the cap by ~day 14.
+    strawberry_seed_hour: int = 8     # buy its seeds through the morning: ~a wave per day
+    # Melon stops replanting after this day: the clone buys 21 melon seeds lifetime and
+    # executes 108 units; our 160-unit run overshot the sq glut curve for less revenue.
+    last_melon_day: int = 13
     melon_bias: float = 1.0           # thumb on the scale per crop, for tuning
     carrot_bias: float = 1.0
     wheat_bias: float = 1.0
@@ -119,7 +137,15 @@ class Params:
     prio_harvest_ready: float = 55.0
     prio_water_bonus: float = 60.0    # inside the yield window
     prio_animal_harvest: float = 55.0
-    prio_animal_care: float = 40.0
+    # 85, not 40: engine-verified (kaggriculture.py:799-800) — every fed+cared day banks +1
+    # product paid out on the next fed production day, so one CARE op is worth a whole unit
+    # of milk ($160 base) or wool ($200 base), the highest coins/op on the farm. At 40 it
+    # lost to crop work and coverage audits showed 6-12 of 14 animals cared per day; the
+    # top-2 clones run 100% and collect the mathematical maximum (168 wool from 6 sheep).
+    prio_animal_care: float = 85.0
+    # FERTILIZE on a producing strawberry: +1 unit on each watered production day for 3 days
+    # (engine :769-770), ~$120-180 per application against selling the fertilizer at ~$100.
+    prio_fertilize: float = 58.0
     prio_plant: float = 38.0
     prio_dig: float = 22.0
     prio_haul: float = 12.0
@@ -147,18 +173,34 @@ class Params:
     # $2,000 SW quadrant, so the cash is there sooner, and an animal placed a few days earlier
     # gets whole extra production cycles. Raising headcount instead is negative every time —
     # 6 sheep, 8/4 and 12/6 all score worse. Measured out of sample, both seats.
-    animal_cash_reserve: float = 2500.0
+    # 900, not 2500: the top-2 clones hold 4 animals by day 3 and 14 by day 12, spending the
+    # opening bank down to $10 — each cow placed 2 days earlier is ~3 extra milk (interval 2,
+    # +care bank). At 2500 our first cow landed day 0 but the second waited for profit ~day 10.
+    animal_cash_reserve: float = 900.0
     feed_cash_floor: float = 150.0     # feeding outranks almost everything; buy wheat above this
-    animals_per_turn: int = 2          # stagger purchases instead of dumping the bank
+    # 3: with the cow-led round-robin this buys 2 cows + 1 sheep per turn when cash
+    # allows, front-loading the herd the way the clones do (4 animals by day 3).
+    animals_per_turn: int = 3          # stagger purchases instead of dumping the bank
     last_animal_day: int = 21         # placed later than this, it never reaches first yield
+    # Fertilize strawberries only while a boosted production can still land before the end:
+    # fertilized_until_day = day+2, productions every 2 days, final collectable yield day 29.
+    fert_use_last_day: int = 27
     # 7, not 6: at 6 a goose squeaks past the season gate in a 240-step episode (4+6 = exactly
     # the 10 days remaining) and can never repay its coop, feed and care actions there.
     animal_lead_days: int = 7         # production days needed after first yield to repay the animal
     feed_reserve_days: float = 2.0    # days of wheat to hold back from selling per animal
-    wheat_pickup_batch: int = 6       # wheat carried per shed trip
-    max_pickup_tasks: int = 2         # don't send the whole crew to the shed at once
-    prio_feed_relaxed: float = 72.0      # not fed yet, but not yet at risk of escaping
-    prio_animal_harvest_partial: float = 33.0  # product waiting, but below max_held
+    # 5x3, not 10x2: one carrier holding the whole day's feed cannot walk 14 pastures in
+    # the turns it has left (measured 7-11 of 14 fed); three smaller carriers can.
+    wheat_pickup_batch: int = 5       # wheat carried per shed trip
+    max_pickup_tasks: int = 3         # don't send the whole crew to the shed at once
+    # 90: must outrank care (85) — the bank only pays on a FED production day, and a cared
+    # but unfed animal both wastes the care op and walks toward escaping. Measured: at 72
+    # (below care) coverage inverted to 100% cared / 43% fed and two animals escaped.
+    prio_feed_relaxed: float = 90.0      # not fed yet, but not yet at risk of escaping
+    # 45, not 33: uncollected yield saturates max_held (6) in ~4 days on a cared cow and
+    # every production past the cap is destroyed; the clones collect promptly and hit the
+    # theoretical production maximum.
+    prio_animal_harvest_partial: float = 45.0  # product waiting, but below max_held
     build_ahead_frac: float = 0.75      # build pens at this fraction of the animal reserve
     prio_pickup: float = 108.0
     prio_place_animal_pickup: float = 102.0
@@ -274,11 +316,21 @@ def choose_crop(obs: Observation, p: Params) -> str | None:
     # separate demand pool), then whatever filler values best. Spreading revenue across
     # products is what a shared market pays for — each product's price only has to carry a
     # fraction of the farm.
-    if counts.get("MELON", 0) < p.melon_tile_cap and crop_value(obs, p, "MELON") > 0:
+    melon_ok = (obs.day <= p.last_melon_day
+                and counts.get("MELON", 0) < p.melon_tile_cap
+                and crop_value(obs, p, "MELON") > 0)
+    straw_ok = (obs.day <= p.strawberry_last_day
+                and counts.get("STRAWBERRY", 0) < p.strawberry_tile_cap
+                and crop_value(obs, p, "STRAWBERRY") > 0)
+    # Melon leads the opening for cash flow, but from day 5 the strawberry ramp takes
+    # precedence: melon replants kept it below its cap all the way to day 12 and starved
+    # the strawberry drip at ~13 tiles against the clone's 27-by-day-12. Melon still
+    # fills in whenever the day's strawberry wave is bought and planted.
+    if straw_ok and obs.day >= p.strawberry_ramp_day:
+        return "STRAWBERRY"
+    if melon_ok:
         return "MELON"
-    if (obs.day <= p.strawberry_last_day
-            and counts.get("STRAWBERRY", 0) < p.strawberry_tile_cap
-            and crop_value(obs, p, "STRAWBERRY") > 0):
+    if straw_ok:
         return "STRAWBERRY"
     best, best_value = None, 0.0
     for crop in ("WHEAT", "CARROT"):
@@ -328,8 +380,11 @@ def animal_targets(obs: Observation, p: Params) -> dict[str, int]:
     scale = min(1.0,
                 (obs.board_size ** 2) / 100.0,
                 obs.total_days / 30.0)
-    return {"SHEEP": int(p.target_sheep * scale),
-            "COW": int(p.target_cows * scale),
+    # Cows first: the clone opening holds 3 cows + 1 sheep by day 3. Dict order is buy
+    # order in animal_orders, and a cow (interval 2) turns care-days into product faster
+    # than a sheep (interval 3) when cash rations the first purchases.
+    return {"COW": int(p.target_cows * scale),
+            "SHEEP": int(p.target_sheep * scale),
             "GOOSE": int(p.target_geese * scale)}
 
 
@@ -347,11 +402,18 @@ def livestock_census(obs: Observation) -> dict:
 
 
 def _wanted_animals(obs: Observation, p: Params) -> dict[str, int]:
-    """Shortfall per species: target minus (placed + already bought)."""
+    """Shortfall per species: target minus (placed + in shed + carried).
+
+    Carried counts: an animal a unit is walking to its pen is invisible to both the shed
+    and the placed census, and skipping it re-bought the same animal every turn of the
+    walk — measured 10 cows and 12 sheep bought against targets of 8 and 6, with the
+    surplus cows squatting the pastures so 8 sheep died unplaced in the shed.
+    """
     census = livestock_census(obs)
     out = {}
     for name, target in animal_targets(obs, p).items():
-        have = census["placed"].get(name, 0) + census["in_shed"].get(name, 0)
+        carried = sum(u.inventory.get(name, 0) for u in obs.units)
+        have = census["placed"].get(name, 0) + census["in_shed"].get(name, 0) + carried
         out[name] = max(0, target - have)
     return out
 
@@ -384,7 +446,12 @@ def animal_orders(obs: Observation, p: Params) -> list[list]:
 
     reserve = wheat_feed_reserve(obs, p)
     if reserve:
-        short = reserve - obs.shed.get("WHEAT", 0)
+        # Count carried wheat too: feed-run pickups move the reserve out of the shed and
+        # into hands, and a shed-only check re-bought the reserve every turn until cash
+        # pinned at the floor (measured: 1,400 wheat bought, episode ended at 10k).
+        holding = obs.shed.get("WHEAT", 0) + sum(u.inventory.get("WHEAT", 0)
+                                                 for u in obs.units)
+        short = reserve - holding
         budget = obs.cash - p.feed_cash_floor
         unit = max(1, obs.prices.get("WHEAT", 25))
         n = min(short, int(budget // unit))
@@ -400,21 +467,35 @@ def animal_orders(obs: Observation, p: Params) -> list[list]:
 
     cash = obs.cash - p.animal_cash_reserve
     bought = 0
-    for name, want in _wanted_animals(obs, p).items():
-        if want <= 0 or bought >= p.animals_per_turn:
-            continue
-        # Season-relative payback, per species. `last_animal_day` is an absolute day and so
-        # says nothing in a short season — the same trap `last_land_day` fell into. A $500
-        # sheep that never reaches its first yield is a pure write-off, and buying at a $2,500
-        # threshold fires on turn 0 against a $3,000 opening bank.
-        if obs.days_remaining < ANIMALS[name]["first_yield_day"] + p.animal_lead_days:
-            continue
-        cost = ANIMALS[name]["cost"]
-        n = min(want, p.animals_per_turn - bought, int(cash // cost))
-        if n > 0:
-            orders.append(["BUY_ANIMAL", name, n])
-            cash -= n * cost
-            bought += n
+    # Round-robin one animal per species per pass, cows leading: buying the whole cow
+    # target first pushed every sheep past day 8, and a sheep placed early banks care for
+    # each pre-yield day (engine :799-800 — the bank accrues from placement, paying out
+    # up to max_held on the first fed production). The clones hold a mixed herd by day 3.
+    wanted = {name: want for name, want in _wanted_animals(obs, p).items() if want > 0}
+    while wanted and bought < p.animals_per_turn:
+        progressed = False
+        for name in list(wanted):
+            if bought >= p.animals_per_turn:
+                break
+            # Season-relative payback, per species. `last_animal_day` is absolute and so
+            # says nothing in a short season. A $500 sheep that never reaches its first
+            # yield is a pure write-off.
+            if obs.days_remaining < ANIMALS[name]["first_yield_day"] + p.animal_lead_days:
+                del wanted[name]
+                continue
+            cost = ANIMALS[name]["cost"]
+            if cash < cost:
+                del wanted[name]
+                continue
+            orders.append(["BUY_ANIMAL", name, 1])
+            cash -= cost
+            bought += 1
+            progressed = True
+            wanted[name] -= 1
+            if wanted[name] <= 0:
+                del wanted[name]
+        if not progressed:
+            break
     return orders
 
 
@@ -487,16 +568,32 @@ def _pickup_tasks(obs: Observation, p: Params) -> list[Task]:
 
     unfed = sum(1 for t in obs.tiles if t.state == "ANIMAL" and not t.fed_today)
     if unfed:
-        have = sum(u.inventory.get("WHEAT", 0) for u in obs.units)
-        deficit = unfed - have
+        # Deliberately ignore wheat already in units' hands: a hand carrying feed on the
+        # far side of the farm suppressed new pickups, and every animal its wheat never
+        # reached had its whole care bank zeroed at the day's production (engine :798).
+        # A redundant shed trip costs one op; a wiped bank costs a $160-200 product.
         available = obs.shed.get("WHEAT", 0)
-        if deficit > 0 and available > 0:
-            batches = min(p.max_pickup_tasks, -(-deficit // max(1, p.wheat_pickup_batch)))
+        if available > 0:
+            batches = min(p.max_pickup_tasks, -(-unfed // max(1, p.wheat_pickup_batch)))
             n = min(p.wheat_pickup_batch, available)
             for b in range(batches):
                 for (x, y) in obs.shed_access:
                     tasks.append(Task(x, y, ["PICKUP", "WHEAT", n], p.prio_pickup,
                                       "pickup", group=f"feedrun:{b}"))
+
+    # Stage fertilizer the same way wheat is staged for feeding: the FERTILIZE task
+    # requires a unit already carrying one.
+    need_fert = sum(1 for t in obs.tiles
+                    if t.state == "PLANT" and t.crop == "STRAWBERRY"
+                    and t.fertilized_until_day < obs.day)
+    if need_fert and obs.day <= p.fert_use_last_day:
+        have = sum(u.inventory.get("FERTILIZER", 0) for u in obs.units)
+        available = obs.shed.get("FERTILIZER", 0)
+        if have < need_fert and available > 0:
+            n = min(p.wheat_pickup_batch, available, need_fert - have)
+            for (x, y) in obs.shed_access:
+                tasks.append(Task(x, y, ["PICKUP", "FERTILIZER", n], p.prio_pickup,
+                                  "pickup", group="fertrun"))
     return tasks
 
 
@@ -572,6 +669,13 @@ def sell_orders(obs: Observation, p: Params) -> list[list]:
 
     # Livestock eats before the market does; the reserve releases for the last few days.
     reserve = 0 if obs.turns_remaining <= p.dump_turns else wheat_feed_reserve(obs, p)
+    # Fertilizer the strawberries will consume is worth more applied (+1 unit per watered
+    # production day, ~$120-180) than sold (~$100); hold back what the active tiles need.
+    fert_reserve = 0
+    if obs.day <= p.fert_use_last_day and obs.turns_remaining > p.dump_turns:
+        fert_reserve = sum(1 for t in obs.tiles
+                           if t.state == "PLANT" and t.crop == "STRAWBERRY"
+                           and t.fertilized_until_day < obs.day)
 
     orders = []
     # Sell the most valuable stock first — order position matters under the 10/turn cap.
@@ -579,6 +683,8 @@ def sell_orders(obs: Observation, p: Params) -> list[list]:
         have = obs.shed.get(item, 0)
         if item == "WHEAT":
             have -= reserve
+        elif item == "FERTILIZER":
+            have -= fert_reserve
         if have <= 0:
             continue
 
@@ -656,7 +762,7 @@ def seed_orders(obs: Observation, p: Params) -> list[list]:
     if crop == "STRAWBERRY":
         if obs.hour > p.strawberry_seed_hour:
             return []
-        want = min(2, room) - obs.seeds.get(crop, 0)
+        want = min(4, room) - obs.seeds.get(crop, 0)
         affordable = int((obs.cash - p.seed_cash_reserve) // CROPS[crop]["seed"])
         want = min(want, max(0, affordable))
         return [["BUY_SEED", crop, want]] if want > 0 else []
@@ -731,53 +837,85 @@ def _plant_task(obs: Observation, p: Params, tile: Tile, crop: str) -> Task:
     return Task(tile.x, tile.y, ["PLANT", crop], p.prio_plant, "plant")
 
 
-def _plant_tile_task(obs: Observation, p: Params, tile: Tile) -> Task | None:
+def _plant_tile_tasks(obs: Observation, p: Params, tile: Tile) -> list[Task]:
     c = CROPS.get(tile.crop)
     if c is None:
-        return None
+        return []
+    tasks: list[Task] = []
 
     decaying = tile.max_lifespan_step >= 0 and obs.step >= tile.max_lifespan_step
     if tile.yield_units > 0 and tile.age_days >= c["first_yield_day"]:
         if decaying:
-            return Task(tile.x, tile.y, ["HARVEST"], p.prio_harvest_decay, "harvest")
-        if tile.age_days >= harvest_age(tile.crop):
-            return Task(tile.x, tile.y, ["HARVEST"], p.prio_harvest_ready, "harvest")
+            tasks.append(Task(tile.x, tile.y, ["HARVEST"], p.prio_harvest_decay, "harvest"))
+        elif tile.age_days >= harvest_age(tile.crop):
+            tasks.append(Task(tile.x, tile.y, ["HARVEST"], p.prio_harvest_ready, "harvest"))
+
+    # Fertilize a producing strawberry: +1 unit on every watered production day for 3 days
+    # (engine :769-770, ongoing crops only). Worth ~$120-180 per application against ~$100
+    # for selling the fertilizer — the clones execute ~107 of these per game.
+    if (tile.crop == "STRAWBERRY"
+            and obs.day <= p.fert_use_last_day
+            and tile.fertilized_until_day < obs.day
+            and tile.age_days >= c["first_yield_day"] - 2
+            and not decaying):
+        done = max(0, (tile.age_days - c["first_yield_day"]) // c["interval"] + 1)
+        if done < c["max_yield"]:
+            tasks.append(Task(tile.x, tile.y, ["FERTILIZE"], p.prio_fertilize,
+                              "fertilize", requires="FERTILIZER"))
 
     if tile.watered_today:
-        return None
+        return tasks
     # Survival: consecutive_unwatered is 1 after any skipped day, and 2 kills the plant
     # at the next end-of-day refresh. Watering only when it is >= 1 (or for yield) skips
     # roughly a quarter of all waterings versus watering everything daily.
     if tile.consecutive_unwatered >= 1:
-        return Task(tile.x, tile.y, ["WATER"], p.prio_water_urgent, "water")
-    in_window = water_window_start(tile.crop) <= tile.age_days <= c["max_yield_day"]
-    if in_window and tile.yield_units < c["max_yield"]:
+        tasks.append(Task(tile.x, tile.y, ["WATER"], p.prio_water_urgent, "water"))
+        return tasks
+    in_window = (not c["ongoing"]
+                 and water_window_start(tile.crop) <= tile.age_days <= c["max_yield_day"])
+    # Ongoing crops gain nothing from the WATER op itself (engine :381 skips them); their
+    # production is calendar-driven. Watering one beyond survival only pays when a fertilizer
+    # boost is active, because the +2 requires was_watered on the production day (:769).
+    fert_boost_pending = c["ongoing"] and tile.fertilized_until_day >= obs.day
+    if (in_window or fert_boost_pending) and tile.yield_units < c["max_yield"]:
         # Tried and rejected: scaling this priority by the crop's unit price. One in-window
         # watering adds exactly one harvestable unit and the window never returns, so a
         # missed melon day looks like $250 lost for one op against ~$30 on wheat — but
         # weighting it that way measured flat-to-negative over 14 out-of-sample seeds.
         # Melon already wins on distance, and starving the cheap crops costs more than the
         # melon it saves.
-        return Task(tile.x, tile.y, ["WATER"], p.prio_water_bonus, "water")
-    return None
+        tasks.append(Task(tile.x, tile.y, ["WATER"], p.prio_water_bonus, "water"))
+    return tasks
 
 
-def _animal_task(obs: Observation, p: Params, tile: Tile) -> Task | None:
+def _animal_tasks(obs: Observation, p: Params, tile: Tile) -> list[Task]:
+    """The full daily ritual as concurrent tasks, not a serialized chain.
+
+    The old one-task-per-animal version drip-fed feed -> harvest -> fertilizer -> care
+    through the queue, and whatever sat last (care, at prio 40) was dropped whenever crop
+    work competed: coverage audits showed 6-12 of 14 animals cared per day against the
+    clones' 100%. Emitting the whole ritual at once lets different units service the same
+    animal in the same day, and the flags are all end-of-day so intra-day order is free.
+    """
     a = ANIMALS.get(tile.animal)
     if a is None:
-        return None
-    if not tile.fed_today:
-        prio = p.prio_feed_critical if tile.consecutive_unfed >= 1 else p.prio_feed_relaxed
-        return Task(tile.x, tile.y, ["FEED"], prio, "feed", requires="WHEAT")
-    if tile.yield_units >= a["max_held"]:
-        return Task(tile.x, tile.y, ["HARVEST"], p.prio_animal_harvest, "harvest")
-    if tile.fertilizer_available:
-        return Task(tile.x, tile.y, ["COLLECT_FERTILIZER"], p.prio_collect_fert, "fert")
-    if not tile.cared_today:
-        return Task(tile.x, tile.y, ["CARE"], p.prio_animal_care, "care")
+        return []
+    tasks: list[Task] = []
+    # Feeding or caring on the last day is a wasted op: the end-of-day production it would
+    # pay into fires after the reward is latched and can never be collected.
+    if obs.days_remaining > 1:
+        if not tile.fed_today:
+            prio = p.prio_feed_critical if tile.consecutive_unfed >= 1 else p.prio_feed_relaxed
+            tasks.append(Task(tile.x, tile.y, ["FEED"], prio, "feed", requires="WHEAT"))
+        if not tile.cared_today:
+            tasks.append(Task(tile.x, tile.y, ["CARE"], p.prio_animal_care, "care"))
     if tile.yield_units > 0:
-        return Task(tile.x, tile.y, ["HARVEST"], p.prio_animal_harvest_partial, "harvest")
-    return None
+        prio = (p.prio_animal_harvest if tile.yield_units >= a["max_held"]
+                else p.prio_animal_harvest_partial)
+        tasks.append(Task(tile.x, tile.y, ["HARVEST"], prio, "harvest"))
+    if tile.fertilizer_available:
+        tasks.append(Task(tile.x, tile.y, ["COLLECT_FERTILIZER"], p.prio_collect_fert, "fert"))
+    return tasks
 
 
 def build_tasks(obs: Observation, p: Params, crop: str | None) -> list[Task]:
@@ -797,16 +935,12 @@ def build_tasks(obs: Observation, p: Params, crop: str | None) -> list[Task]:
         if tile.state == "EMPTY":
             empty.append(tile)
         elif tile.state == "PLANT":
-            task = _plant_tile_task(obs, p, tile)
-            if task:
-                tasks.append(task)
+            tasks.extend(_plant_tile_tasks(obs, p, tile))
         elif tile.state == "WEED":
             if crop:                      # only worth clearing if we would use the tile
                 tasks.append(Task(tile.x, tile.y, ["DIG"], p.prio_dig, "dig"))
         elif tile.state == "ANIMAL":
-            task = _animal_task(obs, p, tile)
-            if task:
-                tasks.append(task)
+            tasks.extend(_animal_tasks(obs, p, tile))
 
     # Pens claim their tiles before crops do, so a build target is never planted over.
     builds = _structure_tasks(obs, p, empty)

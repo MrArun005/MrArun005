@@ -26,19 +26,34 @@ from env_adapter import (
 
 NEG_INF = float("-inf")
 
+# Per-product reservation prices as a fraction of base, distilled from the public top-meta
+# notebooks (Barnyard Economist / Structured Economic Policy — both independently landed on
+# nearly identical tables, backed by measured ~90k banks). Products the town shops drain hard
+# (milk, wool) hold near base all game; melon has zero shop demand and a quadratic glut curve,
+# so waiting for 0.85x base rides it to the floor. Fertilizer's price never refills at all.
+SELL_FRACS = {
+    "MILK": 0.80, "WOOL": 0.80, "EGG": 0.72, "WHEAT": 0.70, "CARROT": 0.62,
+    "MELON": 0.60, "STRAWBERRY": 0.50, "TOMATO": 0.50, "FERTILIZER": 0.15,
+}
+
 
 @dataclass
 class Params:
     """Every magic number in one place. tune.py mutates these, not the rules."""
 
     # --- labour -------------------------------------------------------------
-    hands_per_tile: float = 0.11      # target hands per unlocked tile
-    max_hands: int = 14               # hard cap on hands hired per day
-    # 34, not the original 144: the cap almost never binds at normal hand prices (the
-    # hands_per_tile want stops at 8-9 first, and fib(9)=34 clears it), but at
-    # `farmHandCostMult` 20 it is the difference between 2 hands and 4+ — measured means
-    # 4,857 vs 2,946 over seeds 5-8 on the 240-step expensive-hands config.
-    max_hire_cost: float = 34.0       # skip a hire once its cost exceeds a hand's day of work
+    # 0.16, not 0.11: the whole public top-10 runs 12-13 hands (12 cost $376/day, ~1.3
+    # coins per bought action against melon waterings worth ~250). Under-hiring was v1/v2's
+    # most expensive habit. The scaled cap below keeps this from leaking into configs where
+    # hands cannot pay for themselves.
+    hands_per_tile: float = 0.16      # target hands per unlocked tile
+    max_hands: int = 13               # hard cap on hands hired per day
+    # Interpreted through a season- and farm-scaled cap (see target_hands): the full 144
+    # only applies on a full-length season with a grown farm. On a 240-step episode with
+    # farmHandCostMult 20 the scaled cap admits exactly the 2 hands that measured best
+    # (4,857 vs 2,946 mean over seeds 5-8).
+    max_hire_cost: float = 144.0      # skip a hire once its cost exceeds a hand's day of work
+    final_day_hands: int = 8          # cheap re-hires on the last morning, purely to harvest+haul
     hire_until_hour: int = 4          # only hire early; a late hand has few turns left
     max_hires_per_turn: int = 6       # HIREs are one market order each (cap 10/turn)
     hire_cash_reserve: float = 60.0   # keep this much after paying for the day's hands
@@ -51,6 +66,10 @@ class Params:
     # quadrant that late cannot be filled and worked before the season ends. 12 is worse
     # than 15: it starts blocking expansion that does still pay back.
     last_land_day: int = 15
+    # Cows before land: the measured opening-order result from the public meta — the first
+    # $3,000 goes into livestock (3 cows by day 3), and the day-15 cash gap decides games.
+    # Land bought on day 0 delayed the herd and cost ~9k over the season.
+    min_land_day: int = 4
     land_empty_threshold: int = 6     # only expand when this few tiles are still empty
     land_lead_days: int = 5           # days needed to fill a new quadrant before its crop cycle
     land_payback_mult: float = 1.5    # a quadrant must earn this multiple of its price
@@ -61,19 +80,33 @@ class Params:
     tiles_per_unit: float = 9.0       # tiles one unit can keep tended per day
 
     # --- selling ------------------------------------------------------------
-    sell_min_frac: float = 0.85       # sell only while price >= frac * base
+    sell_min_frac: float = 0.85       # fallback gate for products missing from SELL_FRACS
     sell_min_frac_pressure: float = 0.28   # relaxed gate when the shed is filling up
     shed_pressure_frac: float = 0.50  # shed fullness that triggers the relaxed gate
     shed_force_frac: float = 0.85     # shed fullness that ignores the price gate entirely
     sell_chunk: int = 8               # units per product per turn (dribble, don't dump)
-    dump_turns: int = 72              # turns_remaining <= this -> start liquidating
+    dump_turns: int = 72              # turns_remaining <= this -> wheat feed reserve released
+    # Terminal glide path: from this many days out, force-sell holdings spread over the
+    # remaining turns even below the reserve price. Unsold stock is worth zero, and a pure
+    # reservation-price seller measurably dumped its melons into the $1 floor on the last day.
+    glide_days: int = 12
     final_dump_turns: int = 3         # last N turns: sell everything regardless of price
 
     # --- planting -----------------------------------------------------------
     seed_buffer: int = 12             # seeds to keep queued for the chosen crop
     tiles_per_shed_slot: float = 1.0  # planted tiles allowed per unit of shed capacity
     seed_cash_reserve: float = 120.0
-    melon_tile_cap: int = 24          # tiles of melon before rotating to the next crop
+    # 16, not 24: melon has zero shop demand (town centre only) and a quadratic glut curve
+    # that hits the $1 floor near 158 net units. The converged public top-10 runs ~21 melon
+    # seeds against 44 strawberry; 24 tiles of melon is supply the market cannot absorb.
+    melon_tile_cap: int = 16          # tiles of melon before rotating to the next crop
+    # Strawberry is the meta premium crop: 24 units/day of town demand once shops unlock and
+    # it trades above base late-game. It is ongoing (4 productions, then the tile rots), so
+    # waves must be staggered — the seed drip below plants a few per day instead of one death
+    # cohort — and planted no later than it can still produce.
+    strawberry_tile_cap: int = 16
+    strawberry_last_day: int = 18
+    strawberry_seed_hour: int = 5     # buy its seeds only in the morning: ~a wave per day
     melon_bias: float = 1.0           # thumb on the scale per crop, for tuning
     carrot_bias: float = 1.0
     wheat_bias: float = 1.0
@@ -92,19 +125,23 @@ class Params:
     prio_haul: float = 12.0
 
     move_cost: float = 0.4            # walk-distance weight in the value/turn ratio
-    haul_threshold: int = 40           # carry this much before making a shed trip
+    # 16, not 40: SELL only sees the shed — produce riding around in a unit's inventory is
+    # invisible to the market, and the end-of-day auto-drop lands too late to fund that
+    # day's buying. Frequent small hauls keep stock sellable.
+    haul_threshold: int = 16           # carry this much before making a shed trip
 
     # --- livestock ----------------------------------------------------------
     # Animals sell into price curves that crop saturation never touches, which is the
     # whole reason to bother: melon volume is capped by melon's own glut curve, so wool
     # and milk are additive revenue rather than a substitute.
-    # Retargeted after replay analysis of leaderboard losses: every agent that beat v1 ran
-    # 8-11 animals against our 8, and every animal is also a daily FERTILIZER unit (~$100
-    # base, sellable — see SELLABLE). Eggs sell into a log glut curve (~$40 forever), so
-    # geese went from "poor $/action" to worth holding once their fertilizer is priced in.
-    target_sheep: int = 6             # WOOL, base $200, the best $/action of the three
-    target_cows: int = 6              # MILK, base $160
-    target_geese: int = 3             # EGG $50 but glut-proof, plus daily fertilizer
+    # The converged public top-10 herd: 8 cows + 6 sheep, zero geese. A goose earns ~32
+    # coins/action against a cow's ~95 and a sheep's ~86, and CARE banking (fed+cared days
+    # bank a counter paid out on the next fed production day) multiplies a sheep's wool
+    # x4 — the best animal in the game when tended daily. Every animal is also a daily
+    # FERTILIZER unit (~$100 base, sellable — see SELLABLE).
+    target_sheep: int = 6             # WOOL, base $200; cared it produces 4 wool per cycle
+    target_cows: int = 8              # MILK, base $160, heavy shop demand
+    target_geese: int = 0             # ~32 coins/action; strictly worse than more cows/sheep
     # Timing, not headcount, is what the wool/milk pools respond to. Dropping the buy
     # threshold from $5,000 to $2,500 is worth +2,582 on its own: the labour gate freed the
     # $2,000 SW quadrant, so the cash is there sooner, and an animal placed a few days earlier
@@ -193,13 +230,22 @@ def crop_value(obs: Observation, p: Params, crop: str) -> float:
     cannot mature score -inf) and rotates away from a genuinely collapsed market.
     """
     c = CROPS[crop]
+    price = obs.prices.get(crop, BASE_PRICE[crop])
     if c["ongoing"]:
-        # Ongoing crops cap at 4 cumulative productions and then rot. Never worth a tile.
-        return NEG_INF
+        # Ongoing crops rot after max_yield cumulative productions. Tomato never earns its
+        # keep (12/day town demand, mediocre price). Strawberry is the exception and the
+        # public meta's premium crop: 24/day of shop demand holds its price above base, so
+        # its 4 productions at ~$120 clear the $100 seed with room to spare — as long as
+        # the tile can still reach first yield before the season ends.
+        if crop != "STRAWBERRY":
+            return NEG_INF
+        if obs.day + c["first_yield_day"] > obs.total_days - 2:
+            return NEG_INF
+        cycle = c["first_yield_day"] + c["interval"] * c["max_yield"]
+        return (c["max_yield"] * price - c["seed"]) / cycle
     age = harvest_age(crop)
     if obs.day + age > obs.total_days - 1:
         return NEG_INF                      # cannot mature before the season ends
-    price = obs.prices.get(crop, BASE_PRICE[crop])
     gross = expected_yield(crop) * price * _bias(p, crop)
     return (gross - c["seed"]) / age
 
@@ -223,10 +269,19 @@ def choose_crop(obs: Observation, p: Params) -> str | None:
     nothing until day 10, so the remaining tiles go to carrot and keep the lights on.
     """
     counts = crop_tile_counts(obs)
+    # Portfolio, not a single value ranking: fill the melon engine first (highest $/tile-day,
+    # capped by its own glut curve), then the staggered strawberry waves (premium price,
+    # separate demand pool), then whatever filler values best. Spreading revenue across
+    # products is what a shared market pays for — each product's price only has to carry a
+    # fraction of the farm.
+    if counts.get("MELON", 0) < p.melon_tile_cap and crop_value(obs, p, "MELON") > 0:
+        return "MELON"
+    if (obs.day <= p.strawberry_last_day
+            and counts.get("STRAWBERRY", 0) < p.strawberry_tile_cap
+            and crop_value(obs, p, "STRAWBERRY") > 0):
+        return "STRAWBERRY"
     best, best_value = None, 0.0
-    for crop in CROPS:
-        if crop == "MELON" and counts.get("MELON", 0) >= p.melon_tile_cap:
-            continue
+    for crop in ("WHEAT", "CARROT"):
         value = crop_value(obs, p, crop)
         if value > best_value:
             best, best_value = crop, value
@@ -456,31 +511,44 @@ def affordable_hands(obs: Observation, p: Params, workable: int) -> int:
     """
     want = min(p.max_hands, int(round(workable * p.hands_per_tile)))
     budget = obs.cash - p.hire_cash_reserve
+    cap = _hire_cap(obs, p, workable)
     spent, allowed = 0.0, 0
     while allowed < want:
         cost = hire_cost(allowed, obs.hire_mult)
-        if cost > p.max_hire_cost or spent + cost > budget:
+        if cost > cap or spent + cost > budget:
             break
         spent += cost
         allowed += 1
     return allowed
 
 
+def _hire_cap(obs: Observation, p: Params, workable: int) -> float:
+    """Marginal hire-cost ceiling, scaled by season length and farm size.
+
+    A hand's daily value is proportional to how much profitable work exists: a full-length
+    season on a grown farm justifies the 12th hire at $144, but a 10-day episode on a
+    25-tile farm does not justify a $40 one. Scaling by both terms reproduces the measured
+    optima at the extremes — 12-13 hands on the standard config, exactly 2 hands on the
+    240-step farmHandCostMult=20 config (4,857 vs 2,946 mean over seeds 5-8).
+    """
+    return (p.max_hire_cost
+            * min(1.0, obs.total_days / 30.0)
+            * min(1.0, workable / 50.0))
+
+
 def target_hands(obs: Observation, p: Params) -> int:
     """How many hands today, from workload and affordability."""
     workable = sum(1 for t in obs.tiles if t.state != "LOCKED")
     want = min(p.max_hands, int(round(workable * p.hands_per_tile)))
-    # Walk the fib ladder and stop on the first hire that is either unaffordable or simply
-    # not worth it. The marginal-cost cap matters more than the affordability one: a hand
-    # produces at most ~23 actions, worth roughly $300 at our realised $/action, but the
-    # 14th hire alone costs $377 and the 15th $610. Measured, 14 hands scores ~11k *worse*
-    # than 11 — the extra hands are bought with money and paid for in nothing.
+    # Walk the fib ladder and stop on the first hire that is either unaffordable or not
+    # worth it under the scaled marginal-cost cap.
     budget = obs.cash - p.hire_cash_reserve
+    cap = _hire_cap(obs, p, workable)
     spent = 0.0
     allowed = obs.hires_today
     while allowed < want:
         cost = hire_cost(allowed, obs.hire_mult)
-        if cost > p.max_hire_cost or spent + cost > budget:
+        if cost > cap or spent + cost > budget:
             break
         spent += cost
         allowed += 1
@@ -488,47 +556,71 @@ def target_hands(obs: Observation, p: Params) -> int:
 
 
 def sell_orders(obs: Observation, p: Params) -> list[list]:
-    """Price-gated dribble. Bulk sells walk their own price down; town demand refills
-    the gap between turns, so many small sells beat one big one."""
-    liquidating = obs.turns_remaining <= p.dump_turns
-    if obs.shed_used >= obs.shed_capacity * p.shed_force_frac:
-        # Overflow at the end-of-day dump is *destroyed*, so a sale at the $1 floor beats
-        # holding out. Measured caveat: at the default shedCapacity of 100 this branch never
-        # changes an outcome — the 0.28 pressure gate below already clears everything it
-        # would. It earns its keep only on a small shed, where the gap matters.
-        gate = 0.0
-    elif obs.shed_used >= obs.shed_capacity * p.shed_pressure_frac:
-        gate = p.sell_min_frac_pressure
-    else:
-        gate = p.sell_min_frac
+    """Per-product reservation prices plus a terminal glide path.
 
-    reserve = 0 if liquidating else wheat_feed_reserve(obs, p)
+    Each product sells in small chunks while its price sits above its own reserve fraction
+    of base (SELL_FRACS — shop-drained goods hold near base, melon and fertilizer do not).
+    From `glide_days` out, holdings are additionally force-sold spread over the remaining
+    turns: unsold stock scores zero, and a pure reservation seller rides melon into the $1
+    floor on the final day. Sales at the $1 floor are skipped outright until the final
+    unconditional dump — the floor pays a token dollar and is pure loss.
+    """
+    final_dump = obs.turns_remaining <= p.final_dump_turns
+    gliding = obs.days_remaining <= p.glide_days
+    under_pressure = obs.shed_used >= obs.shed_capacity * p.shed_pressure_frac
+    force = obs.shed_used >= obs.shed_capacity * p.shed_force_frac
+
+    # Livestock eats before the market does; the reserve releases for the last few days.
+    reserve = 0 if obs.turns_remaining <= p.dump_turns else wheat_feed_reserve(obs, p)
 
     orders = []
     # Sell the most valuable stock first — order position matters under the 10/turn cap.
     for item in sorted(SELLABLE, key=lambda i: -obs.prices.get(i, BASE_PRICE[i])):
         have = obs.shed.get(item, 0)
         if item == "WHEAT":
-            have -= reserve               # livestock eats before the market does
+            have -= reserve
         if have <= 0:
             continue
-        if liquidating:
-            # Spread the liquidation over the turns that are left instead of dumping in
-            # one order. Clearing is per-unit lockstep, so a single SELL of everything
-            # walks its own price down once per unit — and town demand still drains
-            # supply between turns, which a one-shot dump throws away. Only the last few
-            # turns sell unconditionally, because unsold stock scores zero.
-            turns = max(1, obs.turns_remaining)
-            qty = have if turns <= p.final_dump_turns else max(p.sell_chunk, -(-have // turns))
-            orders.append(["SELL", item, min(have, qty)])
-        elif obs.price_frac(item) >= (min(gate, p.fert_sell_min_frac)
-                                      if item == "FERTILIZER" else gate):
-            orders.append(["SELL", item, min(have, p.sell_chunk)])
+
+        res = SELL_FRACS.get(item, p.sell_min_frac)
+        if item == "FERTILIZER":
+            res = min(res, p.fert_sell_min_frac)
+        if under_pressure:
+            # Overflow at the end-of-day dump is *destroyed* — shed space outranks price.
+            res = min(res, p.sell_min_frac_pressure)
+        if force:
+            res = 0.0
+        at_floor = obs.prices.get(item, BASE_PRICE[item]) <= 1
+        price_ok = not at_floor and obs.price_frac(item) >= res
+
+        if final_dump or (force and not at_floor):
+            qty = have
+        elif gliding:
+            # Forced glide: this item's share of the remaining turns, more while the price
+            # is still above reserve. Skip floor-priced stock — town demand may lift it
+            # before the final dump, and a floor sale pays $1 for a real unit.
+            glide_qty = -(-have // max(1, obs.turns_remaining))
+            qty = max(glide_qty if not at_floor else 0,
+                      p.sell_chunk if price_ok else 0)
+        else:
+            qty = p.sell_chunk if price_ok else 0
+
+        qty = min(have, qty)
+        if qty > 0:
+            orders.append(["SELL", item, qty])
     return orders
 
 
 def hire_orders(obs: Observation, p: Params) -> list[list]:
-    if obs.hour > p.hire_until_hour or obs.turns_remaining <= obs.turns_per_day:
+    if obs.turns_remaining <= obs.turns_per_day:
+        # Final day: a few of the cheapest hands (fib 1,1,2,3... — pocket change) purely to
+        # harvest and haul what one farmer cannot clear before the reward latches. They
+        # need the full day to be worth it, hence the tighter hour gate.
+        if obs.hour > 1 or obs.turns_remaining <= p.final_dump_turns:
+            return []
+        want = min(p.final_day_hands, target_hands(obs, p)) - obs.hires_today
+        return [["HIRE"]] * max(0, min(want, p.max_hires_per_turn))
+    if obs.hour > p.hire_until_hour:
         return []
     want = target_hands(obs, p) - obs.hires_today
     return [["HIRE"]] * max(0, min(want, p.max_hires_per_turn))
@@ -545,6 +637,9 @@ def plantable_now(obs: Observation, p: Params, crop: str) -> int:
                 max(0, active_tile_cap(obs, p) - planted))
     if crop == "MELON":
         empty = min(empty, max(0, p.melon_tile_cap - crop_tile_counts(obs).get("MELON", 0)))
+    elif crop == "STRAWBERRY":
+        empty = min(empty, max(0, p.strawberry_tile_cap
+                               - crop_tile_counts(obs).get("STRAWBERRY", 0)))
     return empty
 
 
@@ -555,6 +650,16 @@ def seed_orders(obs: Observation, p: Params) -> list[list]:
     room = plantable_now(obs, p, crop)
     if room <= 0:
         return []
+    # Strawberries are ongoing: a cohort planted together rots together. The stagger is
+    # implemented as a seed drip — buy them only in the morning hours, a couple per turn,
+    # so each day plants a small wave instead of one death cohort.
+    if crop == "STRAWBERRY":
+        if obs.hour > p.strawberry_seed_hour:
+            return []
+        want = min(2, room) - obs.seeds.get(crop, 0)
+        affordable = int((obs.cash - p.seed_cash_reserve) // CROPS[crop]["seed"])
+        want = min(want, max(0, affordable))
+        return [["BUY_SEED", crop, want]] if want > 0 else []
     # Seeds are the throttle on planting: with a dozen units able to plant a dozen tiles
     # a turn, a small buffer leaves units idle next to bare earth. Buy up to the tiles
     # we can actually fill.
@@ -574,7 +679,7 @@ def land_orders(obs: Observation, p: Params) -> list[list]:
     Buying the last quadrant for $4k of dirt we never plant is a straight loss.
     """
     price = obs.next_land_price()
-    if price is None or obs.day > p.last_land_day:
+    if price is None or obs.day > p.last_land_day or obs.day < p.min_land_day:
         return []
     # Season-relative guard. `last_land_day` is an absolute day and so says nothing in a
     # short season: on a 240-step episode every day is <= 15, so the farm kept buying

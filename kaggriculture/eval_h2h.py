@@ -48,6 +48,14 @@ def duel(opponent, seed, seat):
     me = harness.make_agent(SHIP)
     opp = harness.make_agent(opponent) if isinstance(opponent, Params) else opponent
     env.run([me, opp] if seat == 0 else [opp, me])
+    # kaggle_environments swallows agent exceptions into DONE + a plausible score, so a
+    # crashing candidate scores ~0 instead of raising — this eval once recorded a
+    # KeyError'ing agent as an honest 0/20. Same guard run_episode has; every eval that
+    # calls env.run directly needs it.
+    ours_seats = (0, 1) if isinstance(opponent, Params) else (seat,)
+    crash = harness._crash_traceback(env, ours_seats)
+    if crash:
+        raise RuntimeError(f"agent crashed during eval (seed={seed}, seat={seat}):\n{crash}")
     ours = float(env.steps[-1][seat].reward or 0)
     theirs = float(env.steps[-1][1 - seat].reward or 0)
     scan = leaks.scan(env.steps, seat)

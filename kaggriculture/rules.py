@@ -194,6 +194,21 @@ class Params:
     wheat_open_tiles: int = 0         # wheat tiles to hold through the opening, for cash flow
     wheat_open_last_day: int = 5      # after this the melon/strawberry ramp takes over
     wheat_refill_day: int = 22        # from here wheat fills whatever the ramps left empty
+    # The feed garden was BUILT PROPERLY and measured (2026-08-06): a dedicated task planting
+    # 5 wheat tiles within 2 of the pens, seeds bought outside the crop channel, harvest and
+    # feed riding the existing machinery — the mechanism proven live in the env first
+    # (harvest pays the acting unit's inventory, FEED consumes from it, nightly reset dumps
+    # hands to shed). It works mechanically: unfed animal-days halved, 14.8 -> 7.6. It loses
+    # anyway, 1/20 head-to-head: five prime tiles by the pens plus the planting ops cost more
+    # than the extra feeds earn. The 107k opponent profits from it because its whole layout
+    # is built around it; grafted onto this farm it is a tax. Both function bodies are in
+    # git history (feat commit before this note) if the layout itself is ever rebuilt.
+    #
+    # Same experiment's control taught something bigger: a variant differing by ONE inert
+    # market order (2 wheat seeds bought, never planted) flipped 20/20 to 18/20. Close games
+    # at this architecture's ceiling are chaos-sensitive — any perturbation reshuffles which
+    # of them fall our way. Past ~18/20, seed-level wins are luck, not signal; judge changes
+    # on bank and the margin distribution, not on the last two wins.
     melon_bias: float = 1.0           # thumb on the scale per crop, for tuning
     carrot_bias: float = 1.0
     wheat_bias: float = 1.0

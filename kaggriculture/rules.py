@@ -164,6 +164,16 @@ class Params:
     # if replanting stops before it can refill. Melon needs 10 days to harvest, so 22 is the
     # last day a replant still lands before the reward latches.
     last_melon_day: int = 22
+    # Wheat at both ends of the season — see `choose_crop`. Both numbers are copied from the
+    # agent that beats v4 by ~42k, not guessed: it opens with ~6 wheat tiles for day-4 cash
+    # and refills ~31 tiles by day 27.
+    # 0: the clone's opening does NOT transplant. Holding 6 wheat tiles to day 5 costs 8
+    # melon tiles and drops us from 17/20 to 15/20 with the bank falling 118,570 -> 98,915.
+    # Their farm is built around 10 melon tiles; ours is built around 18-26, and melon at
+    # 250 base out-earns wheat at 25 by more than the early cash is worth to us.
+    wheat_open_tiles: int = 0         # wheat tiles to hold through the opening, for cash flow
+    wheat_open_last_day: int = 5      # after this the melon/strawberry ramp takes over
+    wheat_refill_day: int = 22        # from here wheat fills whatever the ramps left empty
     melon_bias: float = 1.0           # thumb on the scale per crop, for tuning
     carrot_bias: float = 1.0
     wheat_bias: float = 1.0
@@ -185,11 +195,33 @@ class Params:
     # FERTILIZE on a producing strawberry: +1 unit on each watered production day for 3 days
     # (engine :769-770), ~$120-180 per application against selling the fertilizer at ~$100.
     prio_fertilize: float = 58.0
+    # 38, deliberately below harvest (55), watering (60) and fertilizer collection (50), so
+    # planting only happens with turns nothing else wants. It looks wrong — the farm sits on
+    # 45 empty tiles around day 13-17 and buys seeds it never plants — but raising it to 50
+    # drops us from 17/20 to 8/20 head-to-head (bank 118,570 -> 113,157). Bare earth is not
+    # foregone profit here; it is the correct outcome of a labour-bound farm, and a planted
+    # tile that steals turns from harvesting and watering is worth less than the bare one.
+    # Third independent confirmation of the same ceiling: seed_buffer 18/24 -> 0/20, and
+    # hands_per_tile 0.20/0.24 -> 15/20 and 0/20. Do not try to fill the field.
     prio_plant: float = 38.0
     prio_dig: float = 22.0
     prio_haul: float = 12.0
 
-    move_cost: float = 0.4            # walk-distance weight in the value/turn ratio
+    # 0.9, and this was the binding constraint on the whole farm for far longer than anyone
+    # noticed. `assign` scores a task at priority/(1 + move_cost*dist); at 0.4 a job six
+    # tiles away still outbids the one a unit is standing on, so 48% of all unit-turns went
+    # into walking. Measured against the agent that beats v4: identical unit-turns (6,758 vs
+    # 6,759) and it walks slightly MORE than us (50.2%), but spends 656 fewer turns on
+    # PICKUP and idles 462 turns to our 744 — the gap was never capacity, it was routing.
+    #
+    # Head-to-head over seeds 700-709 x both seats, unimodal with the peak at 0.9:
+    #     0.25 -> 16/20   0.4 -> 17/20   0.6 -> 17/20   0.9 -> 20/20   1.2 -> 19/20
+    #     1.6 -> 18/20
+    # At 0.9 the worst margin across all 20 episodes is +614: it does not lose one.
+    #
+    # This also explains why every capacity change failed: more hands, more seeds, more
+    # planting urgency all made a transit problem worse. Fix routing before adding work.
+    move_cost: float = 0.9            # walk-distance weight in the value/turn ratio
     # 16, not 40: SELL only sees the shed — produce riding around in a unit's inventory is
     # invisible to the market, and the end-of-day auto-drop lands too late to fund that
     # day's buying. Frequent small hauls keep stock sellable.
@@ -363,6 +395,24 @@ def choose_crop(obs: Observation, p: Params) -> str | None:
     # separate demand pool), then whatever filler values best. Spreading revenue across
     # products is what a shared market pays for — each product's price only has to carry a
     # fraction of the farm.
+    # Wheat bookends the season, and both ends were measured off the agent that beats us
+    # (episodes 90212517 / 90212519 / 90231839 — three names, byte-identical play).
+    #
+    # Opening: it holds ~6 wheat tiles from day 0. Wheat matures in 4 days against melon's
+    # 10, so it has 2,431 coins on day 6 where we have 266 — and it spends them on livestock,
+    # holding 6 animals by day 6 and 12 by day 9 against our 3 and 7. Our herd is late
+    # because we are broke, not because the buy rule is shy; spending the *opening bank* on
+    # animals instead was measured and is far worse (0/8), so the fix is to earn it first.
+    #
+    # Endgame: it refills ~31 tiles with wheat by day 27 while we sit on ~30 empty ones.
+    # Wheat matures in 4 days, so anything planted by day 25 still banks before the latch.
+    if crop_value(obs, p, "WHEAT") > 0:
+        wheat_tiles = counts.get("WHEAT", 0)
+        if obs.day <= p.wheat_open_last_day and wheat_tiles < p.wheat_open_tiles:
+            return "WHEAT"
+        if obs.day >= p.wheat_refill_day:
+            return "WHEAT"
+
     melon_ok = (obs.day <= p.last_melon_day
                 and counts.get("MELON", 0) < p.melon_tile_cap
                 and crop_value(obs, p, "MELON") > 0)

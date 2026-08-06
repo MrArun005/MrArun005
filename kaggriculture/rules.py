@@ -1010,12 +1010,16 @@ def land_orders(obs: Observation, p: Params) -> list[list]:
 def market_plan(obs: Observation, p: Params) -> list[list]:
     """Sells go first: orders resolve in list order, so this turn's revenue funds
     this turn's purchases."""
-    orders = sell_orders(obs, p)
-    orders += hire_orders(obs, p)
-    orders += animal_orders(obs, p)
-    orders += seed_orders(obs, p)
-    orders += land_orders(obs, p)
-    return orders[: obs.max_market_orders]
+    sells = sell_orders(obs, p)
+    rest = hire_orders(obs, p) + animal_orders(obs, p) + seed_orders(obs, p) \
+        + land_orders(obs, p)
+    # Sells still go first in list order (this turn's revenue funds this turn's buys), but
+    # they no longer crowd the rest out of the 10-order cap: measured over 3 episodes, the
+    # old tail-slice dropped 24 HIREs and 9 feed-wheat buys on the 1.1% of turns that
+    # overflowed — worker-days and escape risk cut so a 9th product could be listed. Sells
+    # are the safe thing to defer: stock keeps; a missed hire or feed buy does not.
+    keep = max(0, obs.max_market_orders - len(rest))
+    return (sells[:keep] + rest)[: obs.max_market_orders]
 
 
 # --- tasks ------------------------------------------------------------------

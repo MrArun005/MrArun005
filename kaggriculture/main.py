@@ -64,7 +64,13 @@ def _load_tuned_params():
             fields = set(Params.__dataclass_fields__)
             return Params(**{k: v for k, v in data.items() if k in fields})
         except Exception:
-            break
+            # A corrupt params.json earlier in the search order must not mask a valid
+            # one later — and the failure belongs in the Kaggle logs, not in silence.
+            import traceback
+            print(f"params.json at {path} unusable, trying next candidate:",
+                  file=sys.stderr)
+            traceback.print_exc()
+            continue
     return Params()
 
 
@@ -82,10 +88,23 @@ def _safe_action(observation):
     return {"farmer": ["PASS"], "hands": [["PASS"]] * hands, "market": []}
 
 
+_ERRORS_LOGGED = 0
+
+
 def agent(observation, configuration=None):
+    global _ERRORS_LOGGED
     try:
         obs = env_adapter.parse(observation, configuration)
         return env_adapter.serialize(decide(obs, PARAMS), obs)
     except Exception:
-        # Never crash. A no-op beats a forfeit.
+        # Never crash — a no-op beats a forfeit. But say so: a swallowed exception makes a
+        # broken build indistinguishable from a weak policy, and stderr survives into
+        # `kaggle competitions logs <episode> <seat>`. First few only; 720 tracebacks of
+        # the same bug help nobody.
+        if _ERRORS_LOGGED < 3:
+            _ERRORS_LOGGED += 1
+            import traceback
+            print(f"agent error at step {observation.get('step', '?')} "
+                  f"(falling back to PASS):", file=sys.stderr)
+            traceback.print_exc()
         return _safe_action(observation)

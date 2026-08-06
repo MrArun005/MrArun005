@@ -160,6 +160,18 @@ class Params:
     # Hour 8, not 5: at 5 the drip paced ~3.2 tiles/day and the ramp topped out at 38 of
     # 44 tiles before the last-day cutoff; three more buying hours reach the cap by ~day 14.
     strawberry_seed_hour: int = 8     # buy its seeds through the morning: ~a wave per day
+    # Seeds bought per morning. Was hardcoded 4 inside `seed_orders`, which is why no
+    # throttle experiment ever reached it: `seed_buffer` only governs the non-strawberry
+    # branch, and planting priority cannot plant seeds nobody bought. The opponent that beat
+    # us 107,059 to 59,905 ramps ~7/day to 41 strawberry tiles by day 12, so raising this
+    # looked like the fix. Measured, it is the opposite — monotone collapse:
+    #     4 -> 20/20 (bank 120,466)   6 -> 11/20 (113,920)   8 -> 1/20 (108,701)
+    # Their farm profits from 60 tiles; ours bleeds from 50. Copying their ramp without
+    # whatever services it (they water 938 turns to our 659 on the same labour budget) just
+    # plants strawberries that miss waterings and a market share that crashes the price.
+    # Fifth confirmation that raw capacity is not our lever. The gap to them is in how a
+    # farm SERVICES that many tiles, and that answer is in their replays, not in Params.
+    strawberry_drip: int = 4
     # 22, not 13, and it moves with melon_tile_cap above — a wider melon field is pointless
     # if replanting stops before it can refill. Melon needs 10 days to harvest, so 22 is the
     # last day a replant still lands before the reward latches.
@@ -171,6 +183,14 @@ class Params:
     # melon tiles and drops us from 17/20 to 15/20 with the bank falling 118,570 -> 98,915.
     # Their farm is built around 10 melon tiles; ours is built around 18-26, and melon at
     # 250 base out-earns wheat at 25 by more than the early cash is worth to us.
+    #
+    # A persistent version (6 tiles all game, wheat_open_last_day=99) was also measured as a
+    # "feed garden" — the 107k opponent keeps 5-7 wheat tiles by its pens and feeds from
+    # harvests, spending <249 unit-turns on PICKUP to our 582. Through THIS code path it is
+    # 14/20 with unfed doubling to 30.9 and floor-priced sales appearing: wheat returned by
+    # choose_crop hijacks the one-crop-per-turn seed channel and starves the strawberry
+    # drip. The mechanism needs wheat adjacent to pens and feeding from hand-harvests — a
+    # dedicated task, not the crop rotation. Don't re-test it through choose_crop.
     wheat_open_tiles: int = 0         # wheat tiles to hold through the opening, for cash flow
     wheat_open_last_day: int = 5      # after this the melon/strawberry ramp takes over
     wheat_refill_day: int = 22        # from here wheat fills whatever the ramps left empty
@@ -914,7 +934,7 @@ def seed_orders(obs: Observation, p: Params) -> list[list]:
     if crop == "STRAWBERRY":
         if obs.hour > p.strawberry_seed_hour:
             return []
-        want = min(4, room) - obs.seeds.get(crop, 0)
+        want = min(p.strawberry_drip, room) - obs.seeds.get(crop, 0)
         affordable = int((obs.cash - p.seed_cash_reserve) // CROPS[crop]["seed"])
         want = min(want, max(0, affordable))
         return [["BUY_SEED", crop, want]] if want > 0 else []

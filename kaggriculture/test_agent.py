@@ -140,6 +140,7 @@ def test_latency() -> None:
     print("latency")
     from kaggle_environments import make
     times: list[float] = []
+    plans: list[list] = []
     p = Params()
 
     def timed(observation, configuration=None):
@@ -147,6 +148,7 @@ def test_latency() -> None:
         obs = env_adapter.parse(observation, configuration)
         out = env_adapter.serialize(rules.decide(obs, p), obs)
         times.append(time.perf_counter() - t0)
+        plans.append(out.get("market") or [])
         return out
 
     make("kaggriculture", configuration={"episodeSteps": 720, "seed": 2}).run([timed, "starter"])
@@ -154,6 +156,15 @@ def test_latency() -> None:
     check(f"worst turn {worst:.1f}ms < 1000ms", worst < 500, f"{worst:.1f}ms")
     check(f"episode total {total:.1f}s well under budget", total < 30, f"{total:.1f}s")
     print(f"        mean {statistics.fmean(times) * 1000:.2f}ms over {len(times)} turns")
+
+    # Riding along on the episode above rather than paying for a second one. Selling a
+    # product and buying it back on the same turn is never right — it pays the spread for
+    # nothing. The endgame did exactly that for three days: sell_orders released the wheat
+    # feed reserve at dump_turns while animal_orders kept topping it back up.
+    churn = [i for i, m in enumerate(plans)
+             if {o[1] for o in m if o[0] == "SELL"} & {o[1] for o in m if o[0] == "BUY_PRODUCT"}]
+    check("never sells and buys the same product in one turn", not churn,
+          f"{len(churn)} turns, first at step {churn[0] if churn else '-'}")
 
 
 if __name__ == "__main__":

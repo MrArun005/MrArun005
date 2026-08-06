@@ -13,7 +13,6 @@ Usage:
 
 import argparse
 import statistics
-from dataclasses import replace
 
 from rules import Params, decide
 import env_adapter
@@ -47,12 +46,38 @@ def make_agent(params: Params, strict: bool = True):
     return _agent
 
 
+def _crash_traceback(env, seats) -> str:
+    """The traceback of the first crashed seat, or "" if all ran clean.
+
+    `make_agent(strict=True)` cannot actually be loud on its own: kaggle_environments
+    catches whatever the agent closure raises one layer above it, so a policy that
+    raises on every single turn still finishes with status DONE and a tidy
+    starting-cash reward. Measured, not assumed — an agent that raised 20/20 turns
+    scored 3,000.0 with no exception reaching the caller and nothing on our stderr.
+
+    That is the worst failure mode this project has: a broken policy is indistinguishable
+    from a merely bad one, so tune.py scores the wreckage and moves on. env.logs is the
+    only place the evidence survives.
+    """
+    for step_logs in env.logs or []:
+        for seat in seats:
+            entry = step_logs[seat] if seat < len(step_logs) else None
+            stderr = (entry or {}).get("stderr") or ""
+            if "Traceback" in stderr:  # substring, not just truthy: benign warnings land here too
+                return stderr
+    return ""
+
+
 def run_episode(params: Params, seed: int, opponent="starter", seat: int = 0,
                 configuration: dict | None = None) -> float:
     """Drive the shipped simulator; return our final score (cash).
 
     `seat` matters: market orders resolve in player order, so seat 0 has a small
     structural edge. Evaluate on both seats to avoid tuning into that artefact.
+
+    Raises if either of our agents crashed — see `_crash_traceback`. Every eval path
+    (evaluate, compare, benchmark, tune.py, sweep_expensive.py) funnels through here,
+    so this is the one place the check has to live.
     """
     from kaggle_environments import make
 
@@ -65,6 +90,16 @@ def run_episode(params: Params, seed: int, opponent="starter", seat: int = 0,
     opp = make_agent(opponent) if isinstance(opponent, Params) else opponent
     players = [me, opp] if seat == 0 else [opp, me]
     env.run(players)
+
+    # Check the opponent seat too when the opponent is our own code — a crashed baseline
+    # silently turns a paired comparison into "we beat a corpse".
+    ours = (0, 1) if isinstance(opponent, Params) else (seat,)
+    crash = _crash_traceback(env, ours)
+    if crash:
+        raise RuntimeError(
+            f"agent crashed during episode (seed={seed}, seat={seat}); "
+            f"score would have been a meaningless {env.steps[-1][seat].reward}:\n{crash}")
+
     return float(env.steps[-1][seat].reward or 0.0)
 
 

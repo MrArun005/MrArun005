@@ -46,7 +46,21 @@ class Params:
     # coins per bought action against melon waterings worth ~250). Under-hiring was v1/v2's
     # most expensive habit. The scaled cap below keeps this from leaking into configs where
     # hands cannot pay for themselves.
-    hands_per_tile: float = 0.16      # target hands per unlocked tile
+    # 0.14, chosen on WIN RATE, which is the only thing the ladder pays for. Head-to-head
+    # against the previous build over seeds 700-709 x both seats — one consecutive block, so
+    # the settings are comparable to each other rather than to whichever seeds flattered them:
+    #     0.13 -> 14/20   0.14 -> 17/20   0.15 -> 15/20   0.16 -> 16/20   0.24 -> 0/20
+    # Read that honestly: 14-17 out of 20 is inside the noise of this sample, so 0.14 beats
+    # the old 0.16 by a single episode and is not a strong result. What actually separates it
+    # is the worst-case margin, -1,717 against 0.16's -5,085 — it loses smaller, which is what
+    # a win-rate ladder pays for. (An earlier mixed seed set showed 0.14 at 19/20; that was
+    # the seed set, not the setting. Do not quote that number.)
+    # Idle unit-turns rise with headcount — 10.7% at 0.14, 12.4% at 0.16, 16.4% at 0.20 — so
+    # past ~11 hands the extra ones draw wages without reaching work.
+    # Tune this on wins, never on mean: 0.15 banks MORE vs starter than 0.14 (161,871 vs
+    # 159,346) while winning fewer games, and 0.12 banked more than 0.14 while winning 12/20.
+    # `max_hands` never binds either way: 75 workable tiles x 0.14 = 10, under the cap of 13.
+    hands_per_tile: float = 0.14      # target hands per unlocked tile
     max_hands: int = 13               # hard cap on hands hired per day
     # Interpreted through a season- and farm-scaled cap (see target_hands): the full 144
     # only applies on a full-length season with a grown farm. On a 240-step episode with
@@ -97,14 +111,38 @@ class Params:
     final_dump_turns: int = 3         # last N turns: sell everything regardless of price
 
     # --- planting -----------------------------------------------------------
+    # 12, and do not raise it. Queueing more seeds plants more tiles than the crew can work,
+    # and the farm degrades on every axis at once: 18 wins 0/20 head-to-head against this
+    # build (worst margin -30,570) and 24 wins 0/20 (-31,303), with escapes going 0.1 -> 1.9
+    # -> 3.0 and idle unit-turns 12.4% -> 13.7% -> 18.6%. Idle rising while tile count rises
+    # is the tell: the hands are not short of work, they are too far from it. The ~30 tiles
+    # left empty at day 15 are not an opportunity, they are the correct fallow at this
+    # headcount — land is free, labour is what binds.
     seed_buffer: int = 12             # seeds to keep queued for the chosen crop
     tiles_per_shed_slot: float = 1.0  # planted tiles allowed per unit of shed capacity
     seed_cash_reserve: float = 120.0
-    # 13, tuner-confirmed (+5,973 ± 1,632 over 16, both neighbours worse: 10 is -8,328,
-    # 16 is -5,973; 16 paired self-play episodes each): melon has zero shop demand and a
-    # quadratic glut curve, so past ~13 tiles every extra melon mostly cannibalises the
-    # price of the ones already sold.
-    melon_tile_cap: int = 13          # tiles of melon before rotating to the next crop
+    # 26, and the 13 it replaces is the most expensive mistake this agent has carried.
+    # The old value was tuner-confirmed (+5,973 over 16) but tuned ONLY in self-play, where
+    # two identical farms dump melon into one market and glut each other. Melon has no town
+    # demand, so nothing drains that inventory back down — but the glut is only real if
+    # somebody is actually gluttng it. Against an opponent who is not mirroring us the price
+    # never sagged at all: 250-286 for the whole game while we sold 70 units.
+    # Measured, seeds 700-703 x both seats: vs starter 20 tiles is +11,013 (4.2 sigma, 7/8)
+    # and 26 is +14,441 (5.5 sigma, 8/8) over 13. In self-play 26 is +9,997 but only
+    # 1.6 sigma at 4/8 — i.e. no worse in a mirror, decisively better outside one.
+    # The bet: the field's clones plant 21 melon seeds a game, so they are not the mirror
+    # that 13 was defending against. If a melon-heavy field ever shows up, this is the first
+    # number to walk back.
+    # Plant straight to the cap; do NOT drip it. Melon's first cohort really does crater its
+    # own price (275 -> 115 on day 12, no town demand to drain the inventory back down, and
+    # the shed_force gate dumps it at any price once 100 slots fill). Spreading the planting
+    # to fix that was measured and is much worse: opening at 10 tiles +1/day wins 13/20
+    # against the flat cap and banks 155,786 vs starter, opening at 6 +1.5/day wins 0/20 and
+    # banks 137,935, against 17/20 and 162,853 for planting flat out. Monotone, so there is
+    # no interior optimum hiding in there. The cheap early melon is not being sold badly —
+    # it is being converted into hands, land and animals a week before it could be otherwise,
+    # and that compounds for the rest of the season.
+    melon_tile_cap: int = 26          # tiles of melon before rotating to the next crop
     # Strawberry is the meta premium crop: 24 units/day of town demand once shops unlock and
     # it trades above base late-game. It is ongoing (4 productions, then the tile rots), so
     # waves must be staggered — the seed drip below plants a few per day instead of one death
@@ -122,9 +160,10 @@ class Params:
     # Hour 8, not 5: at 5 the drip paced ~3.2 tiles/day and the ramp topped out at 38 of
     # 44 tiles before the last-day cutoff; three more buying hours reach the cap by ~day 14.
     strawberry_seed_hour: int = 8     # buy its seeds through the morning: ~a wave per day
-    # Melon stops replanting after this day: the clone buys 21 melon seeds lifetime and
-    # executes 108 units; our 160-unit run overshot the sq glut curve for less revenue.
-    last_melon_day: int = 13
+    # 22, not 13, and it moves with melon_tile_cap above — a wider melon field is pointless
+    # if replanting stops before it can refill. Melon needs 10 days to harvest, so 22 is the
+    # last day a replant still lands before the reward latches.
+    last_melon_day: int = 22
     melon_bias: float = 1.0           # thumb on the scale per crop, for tuning
     carrot_bias: float = 1.0
     wheat_bias: float = 1.0
@@ -188,6 +227,14 @@ class Params:
     # 7, not 6: at 6 a goose squeaks past the season gate in a 240-step episode (4+6 = exactly
     # the 10 days remaining) and can never repay its coop, feed and care actions there.
     animal_lead_days: int = 7         # production days needed after first yield to repay the animal
+    # 2.0. Raising it works exactly as intended and is still wrong: at 3.0 unfed animal-days
+    # fall 16.6 -> 12.6 and escapes to 0.0, and the build still drops from 17/20 to 15/20
+    # head-to-head (bank vs starter 159,346 -> 142,324); 4.0 gives 14/20 and 92,532. Holding
+    # 42 wheat off the market instead of 28 costs more than the milk it buys.
+    # The instructive part: this was tested because losses correlated with milk falling
+    # behind (700 +2 WIN, 704 -1 WIN, 702 -11 LOSS, 709 -12 LOSS). Feeding the herd better
+    # fixed the milk and seed 709 lost anyway — so the milk gap is a correlate of losing,
+    # not its cause. Don't re-derive that hypothesis from the same correlation.
     feed_reserve_days: float = 2.0    # days of wheat to hold back from selling per animal
     # 5x3, not 10x2: one carrier holding the whole day's feed cannot walk 14 pastures in
     # the turns it has left (measured 7-11 of 14 fed); three smaller carriers can.
@@ -423,7 +470,43 @@ def wheat_feed_reserve(obs: Observation, p: Params) -> int:
 
     A missed second consecutive feed loses the animal outright — 400-500 coins plus the
     rest of the season's production — so this reserve is cheap insurance.
+
+    Zero from `dump_turns` out: the reserve only protects production that still exists.
+    Both callers need that cutoff, and only `sell_orders` had it — so for the last
+    three days the seller dumped the reserve and `animal_orders` bought it straight back,
+    every turn. Seed 393788841: 20 such same-turn round trips on day 29 alone, 137 wheat
+    bought on a day the herd is deliberately never fed (nothing produces on day 29).
+
+    The cash was not the loss — the engine quotes a buy at post-buy inventory precisely so
+    a round trip nets zero (kaggriculture.py:576-578). **Labour** was the loss: the wheat
+    had to be hauled, and PICKUP+DROP ate 164 of 794 unit-turns over days 27-29, versus 87
+    once the loop is gone. Those turns went back to HARVEST and COLLECT. Paired self-play,
+    9 seeds x both seats: +2,276 +- 334 (6.8 sigma, +2.1%), 17/18.
+
+    Releasing it here does starve days 27-28: 121 of the 182 non-deliberate unfed
+    animal-days land there, 35 of them on day 28, which is a cow production day (base only,
+    care bank wiped). That is the price and it has been measured twice. A graded taper that
+    holds one day of feed per remaining fed day loses anyway: -728 +- 281 (5/18) first time,
+    and -393 +- 255 (7/18) re-run after the day-29 pickup loop was fixed, in case that had
+    confounded it. It had not. ~28 wheat sold on day 27 is simply worth more than the milk
+    it would have bought on day 28. Don't re-add it a third time.
     """
+    if obs.turns_remaining <= p.dump_turns:
+        # Not zero — escape insurance. An animal that misses two days running is replaced by
+        # its bare structure and takes every uncollected unit with it (engine :795-798).
+        # Across 20 mirror seeds the score margin correlates +0.77 with the escape
+        # differential and the median margin is only 1,128, so escapes decide these games
+        # outright: the two blowouts (seeds 42 and 803, ~10k each) were both seats that lost
+        # four animals. Reserve one wheat per animal that is *already* one day down rather
+        # than the full 2-day herd reserve — roughly 7 wheat instead of 28, which is the part
+        # the dump can afford to leave behind.
+        # ...but only while a feed can still happen. On the last day nothing is fed, so this
+        # would reserve wheat that no animal will ever eat and the dump can no longer sell:
+        # measured, stranded$ went 0 -> 117/episode, all of it wheat, in 17 of 40 episodes.
+        if not feeding_matters(obs):
+            return 0
+        return sum(1 for t in obs.tiles
+                   if t.state == "ANIMAL" and t.consecutive_unfed >= 1)
     n = sum(livestock_census(obs)["placed"].values())
     return int(round(n * p.feed_reserve_days)) if n else 0
 
@@ -553,6 +636,19 @@ def _place_tasks(obs: Observation, p: Params) -> list[Task]:
     return tasks
 
 
+def feeding_matters(obs: Observation) -> bool:
+    """Whether a feed still buys anything. False on the last day — the production it pays
+    into fires at end-of-day, after the reward has latched.
+
+    Named, rather than inlined twice, because every subsystem that touches feed has to agree
+    on when it stops: `_animal_tasks` emits the FEED, `_pickup_tasks` fetches the wheat for
+    it. Only the first knew to stop, so the second spent all of day 29 sending units to the
+    shed for feed nobody would use — at prio_pickup 108, the highest priority in the system,
+    which then lost the produce those units should have been hauling.
+    """
+    return obs.days_remaining > 1
+
+
 def _pickup_tasks(obs: Observation, p: Params) -> list[Task]:
     """Shed trips to collect what units need in hand: wheat for feeding, animals to place."""
     tasks: list[Task] = []
@@ -566,7 +662,8 @@ def _pickup_tasks(obs: Observation, p: Params) -> list[Task]:
             tasks.append(Task(x, y, ["PICKUP", name, 1], p.prio_place_animal_pickup,
                               "pickup", group=f"get:{name}"))
 
-    unfed = sum(1 for t in obs.tiles if t.state == "ANIMAL" and not t.fed_today)
+    unfed = (sum(1 for t in obs.tiles if t.state == "ANIMAL" and not t.fed_today)
+             if feeding_matters(obs) else 0)
     if unfed:
         # Deliberately ignore wheat already in units' hands: a hand carrying feed on the
         # far side of the farm suppressed new pickups, and every animal its wheat never
@@ -668,7 +765,7 @@ def sell_orders(obs: Observation, p: Params) -> list[list]:
     force = obs.shed_used >= obs.shed_capacity * p.shed_force_frac
 
     # Livestock eats before the market does; the reserve releases for the last few days.
-    reserve = 0 if obs.turns_remaining <= p.dump_turns else wheat_feed_reserve(obs, p)
+    reserve = wheat_feed_reserve(obs, p)
     # Fertilizer the strawberries will consume is worth more applied (+1 unit per watered
     # production day, ~$120-180) than sold (~$100); hold back what the active tiles need.
     fert_reserve = 0
@@ -901,9 +998,7 @@ def _animal_tasks(obs: Observation, p: Params, tile: Tile) -> list[Task]:
     if a is None:
         return []
     tasks: list[Task] = []
-    # Feeding or caring on the last day is a wasted op: the end-of-day production it would
-    # pay into fires after the reward is latched and can never be collected.
-    if obs.days_remaining > 1:
+    if feeding_matters(obs):
         if not tile.fed_today:
             prio = p.prio_feed_critical if tile.consecutive_unfed >= 1 else p.prio_feed_relaxed
             tasks.append(Task(tile.x, tile.y, ["FEED"], prio, "feed", requires="WHEAT"))
@@ -954,6 +1049,20 @@ def build_tasks(obs: Observation, p: Params, crop: str | None) -> list[Task]:
     return tasks
 
 
+def shed_distance_map(obs: Observation) -> dict[tuple[int, int], int]:
+    """Walk distance from every reachable tile to the nearest shed-access tile.
+
+    Four BFS passes over a 10x10 board, and only built on the final day, so the cost is
+    noise against a 1,000 ms turn budget.
+    """
+    out: dict[tuple[int, int], int] = {}
+    for access in obs.shed_access:
+        for pos, (dist, _) in walk_map(obs, access).items():
+            if dist < out.get(pos, 1 << 30):
+                out[pos] = dist
+    return out
+
+
 def haul_tasks(obs: Observation, p: Params, unit_idx: int, carrying: int) -> list[Task]:
     """Trips to the shed. Mandatory on the final day: the free end-of-day dump lands
     at step 719, one turn after the reward is latched at step 718, so anything still
@@ -983,6 +1092,16 @@ def assign(obs: Observation, p: Params, tasks: list[Task], plants_allowed: int =
     for unit in obs.units:
         all_tasks.extend(haul_tasks(obs, p, unit.idx, unit.carrying()))
 
+    # On the last day only the shed scores, so work you cannot walk home from is worse than
+    # no work at all. The scoring below is a rate — priority/(1 + move_cost*dist) — so a
+    # harvest the unit is standing on (55) outbids its own haul eight tiles out (47), and by
+    # the time the haul would win, `dist > turns_remaining` has dropped it from the pool
+    # entirely. The unit then farms local tiles until the latch with full hands: measured
+    # 1,414 of 1,555 stranded dollars per episode sitting in inventories, not the shed.
+    # Filtering here rather than boosting the haul priority lets the drift below carry it
+    # home, which is already the right behaviour for a unit with nothing worth doing.
+    to_shed = shed_distance_map(obs) if obs.days_remaining <= 1 else None
+
     pairs = []
     for unit in obs.units:
         reach = maps[unit.idx]
@@ -997,6 +1116,11 @@ def assign(obs: Observation, p: Params, tasks: list[Task], plants_allowed: int =
             dist, first = hit
             if dist > obs.turns_remaining:
                 continue
+            if to_shed is not None and task.tag != "haul":
+                home = to_shed.get(task.pos)
+                # walk there + do it + walk back + DROP has to fit in what is left
+                if home is None or dist + 1 + home + 1 > obs.turns_remaining:
+                    continue
             # Rate, not difference: a task is worth `priority` and costs `1 + dist`
             # unit-turns to complete, so what we want to maximise is value per turn.
             # Subtracting a linear walk penalty instead let a distant high-priority task

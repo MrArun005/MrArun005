@@ -8,6 +8,8 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
+# ponytail: repo venv first (macOS); pass an explicit interpreter as $1 to override.
+[ -x ../.venv/bin/python ] && PATH="$PWD/../.venv/bin:$PATH"
 PY="${1:-python3}"
 
 echo "== submission checks =="

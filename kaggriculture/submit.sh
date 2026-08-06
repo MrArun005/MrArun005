@@ -12,6 +12,10 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# ponytail: repo venv first, so `python3` and `kaggle` both resolve to it (macOS layout).
+# PY=... still overrides — the Windows box runs C:\kv\Scripts\python.exe.
+[ -x ../.venv/bin/python ] && PATH="$PWD/../.venv/bin:$PATH"
+
 COMP=kaggriculture
 MSG="${1:-rule engine}"
 PY="${PY:-python3}"

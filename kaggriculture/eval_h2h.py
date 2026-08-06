@@ -72,7 +72,8 @@ for label, opponent in (("prev", PREV), ("starter", "starter")):
     losses = [f"{s}/{seat}" for (s, seat), m
               in zip([(s, t) for s in SEEDS for t in (0, 1)], margins) if m <= 0]
     det = {k: statistics.fmean([r[2][k] for r in rows])
-           for k in ("stranded$", "unfed", "escaped", "idle%", "churn", "floor")}
+           for k in ("stranded$", "unfed", "escaped", "idle%", "churn", "floor",
+                     "milk", "wool", "straw", "melon")}
     out[label] = {"wins": wins, "n": len(rows), "ours": ours, "margins": margins,
                   "losses": losses, "det": det}
     print(f"  vs {label:<8} {wins:>2}/{len(rows)} wins   bank {statistics.fmean(ours):>9,.0f}"

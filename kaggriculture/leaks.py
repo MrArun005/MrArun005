@@ -47,8 +47,11 @@ def _held(priv: dict) -> Counter:
 
 
 def scan(steps: list, seat: int) -> dict:
-    """One player's leaks over one episode."""
+    """One player's leaks over one episode, plus executed production for the floor gates
+    (bank alone can hide a milk collapse behind a melon spike)."""
     ops: Counter = Counter()
+    made: Counter = Counter()
+    prev_held = None
     churn = floor = broke = unfed = escaped = 0
     unit_turns = 0
     prev_animals: dict | None = None
@@ -61,6 +64,15 @@ def scan(steps: list, seat: int) -> dict:
         if len(farms) <= seat:
             continue
         farm, prices = farms[seat], (obs.get("market") or {}).get("prices") or {}
+        priv_now = obs.get("private")
+        if priv_now is not None:
+            cur = _held(priv_now)
+            if prev_held is not None:
+                for item in ("MILK", "WOOL", "STRAWBERRY", "MELON"):
+                    d = cur[item] - prev_held[item]
+                    if d > 0:
+                        made[item] += d
+            prev_held = cur
 
         for op in (act.get("hands") or []) + [act.get("farmer") or []]:
             if op:
@@ -103,6 +115,8 @@ def scan(steps: list, seat: int) -> dict:
         in_hands.update({k: v for k, v in inv.items() if k in SELLABLE})
     return {
         "score": float(last.get("reward") or 0.0),
+        "milk": made["MILK"], "wool": made["WOOL"],
+        "straw": made["STRAWBERRY"], "melon": made["MELON"],
         "churn": churn,
         "stranded$": sum(v * prices.get(k, 0) for k, v in stranded.items()),
         "hands$": sum(v * prices.get(k, 0) for k, v in in_hands.items()),

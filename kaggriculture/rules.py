@@ -252,6 +252,17 @@ class Params:
     # 128,778 without. Zones already provide all the persistence this farm can use; a
     # time-lock on top glues units to tiles whose work is finished. Persistence in space
     # pays, persistence in time double-counts it — don't rebuild.
+    # ACCEPTED (a tombstone correctly reversed): feed already in hands counts against what
+    # needs fetching. Pre-rounds this was harmful (unfed 14.7 -> 31.8 — far-carried wheat
+    # starved pens). Feeding rounds deliver the carrier to the animal, so the redundant
+    # shed trips became pure waste: counting carried wheat is +3,936 contested (133,794 ->
+    # 137,730), 20/20, escapes 0. The rhythm audit showed one of our units spending NINE
+    # straight hours on pickups; the 2,910-rated opponent does one pickup then feeds five.
+    pickup_counts_carried: bool = True
+    # Do NOT taper the crew after buildout, however elite the pattern looks: the 2,910
+    # opponent runs 6 hands on day 14 to our 12, but copying that (0.08/tile from day 13)
+    # loses 38,802 — our slack turns are surge capacity for harvest/water peaks, and wages
+    # are trivial next to a missed production day. Sixth organ-transplant death.
     # v8 mechanism 6, ACCEPTED: feeding rounds — from this hour every unfed animal is a
     # conscription order, not a bid (see the critical-feed block in `assign`). Zoning had
     # dropped the herd to 88% fed (unfed 47/episode) because feeds lose auctions on
@@ -814,11 +825,17 @@ def _pickup_tasks(obs: Observation, p: Params) -> list[Task]:
         # A redundant shed trip costs one op; a wiped bank costs a $160-200 product.
         available = obs.shed.get("WHEAT", 0)
         if available > 0:
-            # Re-tested 2026-08-06 and the redundancy above is load-bearing: subtracting
-            # wheat already in hand from `unfed` takes unfed animal-days 14.7 -> 31.8,
-            # escapes 0.0 -> 1.9, idle 10.9% -> 15.6% and the head-to-head 20/20 -> 19/20.
-            # We do spend ~656 unit-turns on PICKUP against the leaderboard agent's near
-            # zero, but those trips are what keeps the herd fed. Don't reclaim them.
+            # The redundancy above (ignoring carried wheat) was load-bearing pre-rounds:
+            # counting carried wheat took unfed 14.7 -> 31.8 because feed in a far hand
+            # starved the pens. Feeding rounds changed that — the carrier is conscripted
+            # to the animal — so the insurance is re-testable via pickup_counts_carried.
+            # Rhythm audit (episode 90347385, day 14): one of our units spent NINE straight
+            # hours on pickups; the 2,910-rated opponent does one pickup then feeds five
+            # animals from carried stock.
+            if p.pickup_counts_carried:
+                unfed = max(0, unfed - sum(u.inventory.get("WHEAT", 0) for u in obs.units))
+                if not unfed:
+                    return tasks
             batches = min(p.max_pickup_tasks, -(-unfed // max(1, p.wheat_pickup_batch)))
             n = min(p.wheat_pickup_batch, available)
             for b in range(batches):

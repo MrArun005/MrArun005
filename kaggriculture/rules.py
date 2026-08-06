@@ -238,6 +238,11 @@ class Params:
     # serve the pens (119,110 — an un-zoned unit is a wanderer, not a servant).
     # The escape bleed is mechanism 4's target: pre-assign critical feeds off-market.
     zone_bonus: float = 2.0
+    # Temporal stickiness (a bid bonus on last turn's target) was built and measured on
+    # top of zones and LOSES, monotonically: 127,278 at 1.3x and 121,491 at 1.8x against
+    # 128,778 without. Zones already provide all the persistence this farm can use; a
+    # time-lock on top glues units to tiles whose work is finished. Persistence in space
+    # pays, persistence in time double-counts it — don't rebuild.
     # v8 mechanism 4, ACCEPTED: critical feeds (animal one missed day from escaping)
     # bypass the auction — the nearest wheat-carrying unit is conscripted before bidding
     # opens. Under zoning these feeds lost on geometry and 2.4 animals/episode walked.

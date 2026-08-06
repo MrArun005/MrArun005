@@ -252,6 +252,13 @@ class Params:
     # 128,778 without. Zones already provide all the persistence this farm can use; a
     # time-lock on top glues units to tiles whose work is finished. Persistence in space
     # pays, persistence in time double-counts it — don't rebuild.
+    # v8 mechanism 8, ACCEPTED: strawberry's future productions are valued at no less than
+    # this fraction of base when planning, because 24/day of town demand recovers a flooded
+    # price. Reading spot instead made the farm abandon its backbone whenever an opponent
+    # flooded (ladder ep 90422705: strawberry 138 executed vs ~210 normal, a panic 22-tile
+    # melon wave, bank 91k vs their 162k). Byte-identical on the bench (prev/starter never
+    # crash the price) — accepted as bench-neutral + closes a documented ladder collapse.
+    strawberry_plan_floor: float = 0.75
     # ACCEPTED (a tombstone correctly reversed): feed already in hands counts against what
     # needs fetching. Pre-rounds this was harmful (unfed 14.7 -> 31.8 — far-carried wheat
     # starved pens). Feeding rounds deliver the carrier to the animal, so the redundant
@@ -466,6 +473,12 @@ def crop_value(obs: Observation, p: Params, crop: str) -> float:
             return NEG_INF
         if obs.day + c["first_yield_day"] > obs.total_days - 2:
             return NEG_INF
+        # Plan on demand-backed value, not spot panic: 24/day of town demand drains any
+        # strawberry glut back up, so a crashed price is temporary — but reading spot here
+        # made the farm abandon its backbone when an opponent flooded (ladder ep 90422705:
+        # strawberry executed 138 vs our normal ~210, a 22-tile panic melon wave instead,
+        # bank 91k). The floor prices future productions at what the market recovers to.
+        price = max(price, p.strawberry_plan_floor * BASE_PRICE[crop])
         cycle = c["first_yield_day"] + c["interval"] * c["max_yield"]
         return (c["max_yield"] * price - c["seed"]) / cycle
     age = harvest_age(crop)

@@ -20,8 +20,8 @@ market side is a price-gated dribbler.
 from dataclasses import dataclass, asdict
 
 from env_adapter import (
-    ANIMALS, BASE_PRICE, CROPS, SELLABLE,
-    Action, Observation, Tile, hire_cost, walk_map, water_window_start,
+    ANIMALS, BASE_PRICE, CROPS, MARKET_I0, SELLABLE,
+    Action, Observation, Tile, hire_cost, market_price, walk_map, water_window_start,
 )
 
 NEG_INF = float("-inf")
@@ -252,6 +252,14 @@ class Params:
     # 128,778 without. Zones already provide all the persistence this farm can use; a
     # time-lock on top glues units to tiles whose work is finished. Persistence in space
     # pays, persistence in time double-counts it — don't rebuild.
+    # Curve-aware sell sizing (from the public "Economics-Driven Farm Manager" notebook;
+    # curve model verified 200/200 vs engine source) — measured and REJECTED: -2,693
+    # contested (135,037 vs 137,730) and the executed floors caught the mechanism: wool
+    # production fell 129 -> 115 because larger early sells shift cash timing and depress
+    # the shared market. Per-order price optimization loses to its own second-order market
+    # feedback. Keep OFF; the exact market_price model in env_adapter stays — it's useful
+    # for anything that needs to price a hypothetical sale.
+    marginal_sell: bool = False
     # v8 mechanism 8, ACCEPTED: strawberry's future productions are valued at no less than
     # this fraction of base when planning, because 24/day of town demand recovers a flooded
     # price. Reading spot instead made the farm abandon its backbone whenever an opponent
@@ -981,6 +989,23 @@ def sell_orders(obs: Observation, p: Params) -> list[list]:
         at_floor = obs.prices.get(item, BASE_PRICE[item]) <= 1
         price_ok = not at_floor and obs.price_frac(item) >= res
 
+        # Curve-aware sizing: the engine's price curve is known exactly (env_adapter,
+        # verified 200/200 vs source), so instead of a blind fixed chunk, sell the largest
+        # quantity whose LAST unit still clears this item's reserve. More when the curve is
+        # shallow, less near the cliff — every liquidation path gets better realized prices.
+        chunk = p.sell_chunk
+        if p.marginal_sell and price_ok:
+            inv = obs.market_inventory.get(item, MARKET_I0)
+            floor_p = max(1.0, res * BASE_PRICE[item])
+            lo, hi = 1, have
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                if market_price(item, inv + mid - 1) >= floor_p:
+                    lo = mid
+                else:
+                    hi = mid - 1
+            chunk = lo
+
         if final_dump or (force and not at_floor):
             qty = have
         elif gliding:
@@ -989,9 +1014,9 @@ def sell_orders(obs: Observation, p: Params) -> list[list]:
             # before the final dump, and a floor sale pays $1 for a real unit.
             glide_qty = -(-have // max(1, obs.turns_remaining))
             qty = max(glide_qty if not at_floor else 0,
-                      p.sell_chunk if price_ok else 0)
+                      chunk if price_ok else 0)
         else:
-            qty = p.sell_chunk if price_ok else 0
+            qty = chunk if price_ok else 0
 
         qty = min(have, qty)
         if qty > 0:

@@ -47,6 +47,50 @@ SELLABLE = list(PRODUCTS)
 
 LAND_PRICES = [1000, 2000, 4000]
 
+# The engine's exact market curve (kaggriculture.py:38-61, verified 1.32.4). Selling walks
+# inventory up and the price down along these shapes; knowing the curve exactly lets the
+# seller size an order so the LAST unit still clears its reserve, instead of dumping a
+# blind fixed chunk.
+MARKET_I0 = 10000
+MARKET_PARAMS = {
+    "WHEAT":      {"base":  25, "T": 400, "bf": "sqrt",   "bt": 0.80, "af": "log",    "at": 0.20},
+    "CARROT":     {"base":  35, "T": 450, "bf": "log",    "bt": 0.20, "af": "sqrt",   "at": 0.70},
+    "TOMATO":     {"base":  60, "T": 200, "bf": "linear", "bt": 0.40, "af": "sqrt",   "at": 0.60},
+    "STRAWBERRY": {"base": 120, "T": 100, "bf": "sqrt",   "bt": 0.70, "af": "linear", "at": 1.60},
+    "MELON":      {"base": 250, "T": 300, "bf": "log",    "bt": 0.20, "af": "sq",     "at": 3.60},
+    "EGG":        {"base":  50, "T": 332, "bf": "linear", "bt": 0.40, "af": "log",    "at": 0.20},
+    "MILK":       {"base": 160, "T": 122, "bf": "sqrt",   "bt": 0.60, "af": "linear", "at": 1.60},
+    "WOOL":       {"base": 200, "T": 105, "bf": "log",    "bt": 0.20, "af": "sq",     "at": 3.20},
+    "FERTILIZER": {"base": 100, "T": 200, "bf": "linear", "bt": 0.40, "af": "linear", "at": 0.40},
+}
+
+
+def _shape(func: str, x: float) -> float:
+    import math
+    x = max(0.0, x)
+    if func == "linear":
+        return x
+    if func == "sq":
+        return x * x
+    if func == "sqrt":
+        return math.sqrt(x)
+    if func == "log":
+        return math.log(1.0 + x)
+    return x
+
+
+def market_price(item: str, inventory: float) -> int:
+    """Exact engine price at a given market inventory (floor 1)."""
+    p = MARKET_PARAMS[item]
+    base = p["base"]
+    if inventory < MARKET_I0:
+        amp = p["bt"] * base / _shape(p["bf"], p["T"])
+        price = base + amp * _shape(p["bf"], MARKET_I0 - inventory)
+    else:
+        amp = p["at"] * base / _shape(p["af"], p["T"])
+        price = base - amp * _shape(p["af"], inventory - MARKET_I0)
+    return max(1, int(round(price)))
+
 DIRECTIONS = {"NORTH": (0, -1), "SOUTH": (0, 1), "EAST": (1, 0), "WEST": (-1, 0)}
 
 

@@ -171,6 +171,15 @@ class Params:
     # plants strawberries that miss waterings and a market share that crashes the price.
     # Fifth confirmation that raw capacity is not our lever. The gap to them is in how a
     # farm SERVICES that many tiles, and that answer is in their replays, not in Params.
+    #
+    # RE-TESTED under zone 2.0 + conscripted feeds (the servicing rebuild): drip 6 no
+    # longer collapses — 20/20 at 127,382 — but still loses ~1.4k to rc2's 128,778. The
+    # early-ramp constraint isn't servicing anymore, it's day-6 cash (their wheat engine
+    # funds 100-coin seeds we can't afford yet). Their whole ramp shape (drip 6 + stop at
+    # day 14) is worse still: 114,930, 18/20. Their organs feed each other; transplants
+    # keep dying. Also: strawberry_last_day 17 -> 14 alone loses 12,907 — our late tiles
+    # at 2.8 units are NOT garbage, they're profit on land that would otherwise idle
+    # (measured idle fell to 8.1% and the freed labour produced nothing).
     strawberry_drip: int = 4
     # 22, not 13, and it moves with melon_tile_cap above — a wider melon field is pointless
     # if replanting stops before it can refill. Melon needs 10 days to harvest, so 22 is the
@@ -243,6 +252,14 @@ class Params:
     # 128,778 without. Zones already provide all the persistence this farm can use; a
     # time-lock on top glues units to tiles whose work is finished. Persistence in space
     # pays, persistence in time double-counts it — don't rebuild.
+    # v8 mechanism 6, ACCEPTED: feeding rounds — from this hour every unfed animal is a
+    # conscription order, not a bid (see the critical-feed block in `assign`). Zoning had
+    # dropped the herd to 88% fed (unfed 47/episode) because feeds lose auctions on
+    # geometry; rounds bring it to ~96% while keeping the whole crop engine. Curve, seeds
+    # 700-709 x both seats: h18 -> 131,044, h15 -> 133,156, h12 -> 134,149, h9 -> 133,794.
+    # Hour 9 picked on robustness (floor 121,031, worst +26,527, unfed 15.2, vs-starter
+    # min 146,814) — the h12 bank edge is noise, the margin edge is not.
+    evening_feed_hour: int = 9
     # v8 mechanism 4, ACCEPTED: critical feeds (animal one missed day from escaping)
     # bypass the auction — the nearest wheat-carrying unit is conscripted before bidding
     # opens. Under zoning these feeds lost on geometry and 2.4 animals/episode walked.
@@ -1281,7 +1298,15 @@ def assign(obs: Observation, p: Params, tasks: list[Task], plants_allowed: int =
     reserved_tasks: set[int] = set()
     if p.critical_feed_offmarket:
         for t_idx, task in enumerate(all_tasks):
-            if task.tag != "feed" or task.priority < p.prio_feed_critical:
+            if task.tag != "feed":
+                continue
+            # Critical feeds always; ordinary feeds too once the evening rounds start —
+            # fed_today is read at end of day, so an hour-20 feed pays like an hour-6 one,
+            # and by evening the watering that outbids feeds under zoning is mostly done.
+            # rc2 runs ~88% fed vs the elite's 99%, and every unfed day zeroes that
+            # animal's care bank.
+            if (task.priority < p.prio_feed_critical
+                    and obs.hour < p.evening_feed_hour):
                 continue
             best = None
             for unit in obs.units:

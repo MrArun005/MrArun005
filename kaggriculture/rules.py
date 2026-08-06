@@ -238,9 +238,13 @@ class Params:
     # serve the pens (119,110 — an un-zoned unit is a wanderer, not a servant).
     # The escape bleed is mechanism 4's target: pre-assign critical feeds off-market.
     zone_bonus: float = 2.0
-    # v8 mechanism 3: exact Hungarian assignment instead of greedy (see _optimal_pick).
-    # Default OFF for the same A/B-isolation reason.
-    assign_optimal: bool = False
+    # v8 mechanism 4, ACCEPTED: critical feeds (animal one missed day from escaping)
+    # bypass the auction — the nearest wheat-carrying unit is conscripted before bidding
+    # opens. Under zoning these feeds lost on geometry and 2.4 animals/episode walked.
+    # Measured on the zoned build: escapes 2.4 -> 0.0 across all 40 episodes, contested
+    # bank flat (-655, noise), vs starter +2,816. Removes a compounding failure mode for
+    # nothing.
+    critical_feed_offmarket: bool = True
     melon_bias: float = 1.0           # thumb on the scale per crop, for tuning
     carrot_bias: float = 1.0
     wheat_bias: float = 1.0
@@ -1223,60 +1227,6 @@ def haul_tasks(obs: Observation, p: Params, unit_idx: int, carrying: int) -> lis
 
 # --- assignment -------------------------------------------------------------
 
-def _optimal_pick(pairs: list, all_tasks: list, plants_allowed: int) -> list:
-    """Exact unit-task assignment (Hungarian) over the scored pairs.
-
-    Maximizes the farm-wide score total where greedy only maximizes one pair at a time.
-    Groups and the plant budget aren't matrix constraints, so violations are repaired by
-    banning the offending pair and re-solving — converges in a few rounds because every
-    round removes at least one pair. Falls back to whatever the last round accepted.
-
-    scipy is a measurement dependency, not a shipping one: if this loses the A/B it gets
-    deleted, and if it wins the solve gets re-implemented dependency-free before submit.
-    """
-    import numpy as np
-    from scipy.optimize import linear_sum_assignment
-
-    units = sorted({u for _, u, _, _, _ in pairs})
-    tasks_ = sorted({t for _, _, t, _, _ in pairs})
-    ui = {u: i for i, u in enumerate(units)}
-    ti = {t: j for j, t in enumerate(tasks_)}
-    NEG = -1e9
-    score = np.full((len(units), len(tasks_)), NEG)
-    move: dict = {}
-    for s, u, t, dist, first in pairs:
-        if s > score[ui[u], ti[t]]:
-            score[ui[u], ti[t]] = s
-            move[(u, t)] = (dist, first)
-
-    chosen: list = []
-    for _ in range(4):
-        rows, cols = linear_sum_assignment(score, maximize=True)
-        picks = sorted(((score[i, j], units[i], tasks_[j]) for i, j in zip(rows, cols)
-                        if score[i, j] > NEG / 2), key=lambda x: -x[0])
-        groups: set = set()
-        budget = plants_allowed
-        chosen, banned = [], []
-        for s, u, t in picks:
-            task = all_tasks[t]
-            if task.group and task.group in groups:
-                banned.append((u, t))
-                continue
-            if task.tag == "plant":
-                if budget <= 0:
-                    banned.append((u, t))
-                    continue
-                budget -= 1
-            if task.group:
-                groups.add(task.group)
-            chosen.append((u, t, *move[(u, t)]))
-        if not banned:
-            break
-        for u, t in banned:
-            score[ui[u], ti[t]] = NEG
-    return chosen
-
-
 def assign(obs: Observation, p: Params, tasks: list[Task], plants_allowed: int = 0) -> list[list]:
     """Greedy: score every (unit, task) pair, take the best pair, repeat.
 
@@ -1318,10 +1268,37 @@ def assign(obs: Observation, p: Params, tasks: list[Task], plants_allowed: int =
     def zone(x: int, y: int) -> int:
         return (0 if x < half else 1) + (0 if y < half else 2)
 
+    # v8 mechanism 4: critical feeds bypass the auction. An animal one missed day from
+    # escaping is not a bid, it's an order — under zoning these feeds were losing on
+    # geometry (2.4 escapes/episode at zone 2.0) because every nearby unit had boosted
+    # local work. Nearest wheat-carrying unit is conscripted; both leave the market.
+    reserved_units: set[int] = set()
+    reserved_tasks: set[int] = set()
+    if p.critical_feed_offmarket:
+        for t_idx, task in enumerate(all_tasks):
+            if task.tag != "feed" or task.priority < p.prio_feed_critical:
+                continue
+            best = None
+            for unit in obs.units:
+                if unit.idx in reserved_units or unit.inventory.get("WHEAT", 0) <= 0:
+                    continue
+                hit = maps[unit.idx].get(task.pos)
+                if hit is not None and (best is None or hit[0] < best[0]):
+                    best = (hit[0], unit.idx, hit[1])
+            if best is not None:
+                dist, uidx, first = best
+                ops[uidx] = list(task.op) if dist == 0 else [first]
+                reserved_units.add(uidx)
+                reserved_tasks.add(t_idx)
+
     pairs = []
     for unit in obs.units:
+        if unit.idx in reserved_units:
+            continue
         reach = maps[unit.idx]
         for t_idx, task in enumerate(all_tasks):
+            if t_idx in reserved_tasks:
+                continue
             if task.owner is not None and task.owner != unit.idx:
                 continue
             if task.requires and unit.inventory.get(task.requires, 0) <= 0:
@@ -1357,37 +1334,33 @@ def assign(obs: Observation, p: Params, tasks: list[Task], plants_allowed: int =
                 score *= p.zone_bonus
             pairs.append((score, unit.idx, t_idx, dist, first))
 
-    taken_units: set[int] = set()
-    if p.assign_optimal and pairs:
-        # v8 mechanism 3: exact assignment instead of greedy. Greedy takes the best single
-        # pair then the next-best remaining; it never sees that giving unit A its second
-        # choice frees unit B's first, raising the farm-wide total. The old comment here
-        # claimed "a Hungarian solve would buy little" — never measured, same crime as
-        # move_cost 0.4. Groups and the plant budget are enforced by banning violating
-        # pairs and re-solving (a few iterations at most).
-        for unit_idx, t_idx, dist, first in _optimal_pick(pairs, all_tasks, plants_allowed):
-            taken_units.add(unit_idx)
-            ops[unit_idx] = list(all_tasks[t_idx].op) if dist == 0 else [first]
-    else:
-        pairs.sort(key=lambda r: -r[0])
-        taken_tasks: set[int] = set()
-        taken_groups: set[str] = set()
-        for _, unit_idx, t_idx, dist, first in pairs:
-            if unit_idx in taken_units or t_idx in taken_tasks:
+    # Greedy on purpose — exact Hungarian assignment was built and measured twice and
+    # loses ~8k contested (129,433 greedy vs 121,264 solver with its group-collapse bug
+    # fixed; 118,948 before). Per-turn-optimal matching reshuffles the whole farm whenever
+    # marginal totals shift, so units pivot mid-walk; greedy's sequential claims give the
+    # same unit the same task turn after turn. This is a repeated game: cross-turn
+    # persistence beats per-turn optimality, which is also why zone ownership (adds
+    # persistence) is worth +10,863 here. Don't rebuild the solver.
+    taken_units: set[int] = set(reserved_units)
+    pairs.sort(key=lambda r: -r[0])
+    taken_tasks: set[int] = set()
+    taken_groups: set[str] = set()
+    for _, unit_idx, t_idx, dist, first in pairs:
+        if unit_idx in taken_units or t_idx in taken_tasks:
+            continue
+        task = all_tasks[t_idx]
+        if task.group and task.group in taken_groups:
+            continue
+        if task.tag == "plant":
+            # Seeds run out long before empty tiles do; spend on the nearest tiles.
+            if plants_allowed <= 0:
                 continue
-            task = all_tasks[t_idx]
-            if task.group and task.group in taken_groups:
-                continue
-            if task.tag == "plant":
-                # Seeds run out long before empty tiles do; spend on the nearest tiles.
-                if plants_allowed <= 0:
-                    continue
-                plants_allowed -= 1
-            taken_units.add(unit_idx)
-            taken_tasks.add(t_idx)
-            if task.group:
-                taken_groups.add(task.group)
-            ops[unit_idx] = list(task.op) if dist == 0 else [first]
+            plants_allowed -= 1
+        taken_units.add(unit_idx)
+        taken_tasks.add(t_idx)
+        if task.group:
+            taken_groups.add(task.group)
+        ops[unit_idx] = list(task.op) if dist == 0 else [first]
 
     # Idle units drift toward the shed so they start the next task closer to supply.
     for unit in obs.units:

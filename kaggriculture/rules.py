@@ -209,6 +209,19 @@ class Params:
     # at this architecture's ceiling are chaos-sensitive — any perturbation reshuffles which
     # of them fall our way. Past ~18/20, seed-level wins are luck, not signal; judge changes
     # on bank and the margin distribution, not on the last two wins.
+    # v8 mechanism 1: front-run the opponent's melon dump. Their pipeline is visible ten
+    # days out (opp_melon_soon in the adapter); when >= this many of their melon tiles are
+    # near maturity, our melon harvests at first-yield age instead of waiting for max yield
+    # (_plant_tile_tasks) and the sell reserve relaxes toward the post-crash price
+    # (sell_orders). Measured on seed 700: their 13-tile wave takes melon 277 -> 81 -> 37 in
+    # three days and our default harvest matured one day AFTER the crash — four units at 274
+    # beat six at 37 by 7x. A/B on seeds 700-709 x both seats: 20/20 held on both benches,
+    # worst margin +442 -> +2,962 (6.7x), cost -1.2% mean bank vs prev, byte-identical vs
+    # starter (no melon to react to). Trigger 6 vs 10 near-identical; 6 keeps slightly more.
+    # NOTE the sell-gate relax alone was a proven no-op (shed is empty before their dump
+    # lands — we were structurally the second seller); the harvest side is what acts.
+    frontrun_melon_tiles: int = 6     # opp melon tiles near maturity that trigger the exit
+    frontrun_sell_frac: float = 0.45  # relaxed melon reserve while their wave is incoming
     melon_bias: float = 1.0           # thumb on the scale per crop, for tuning
     carrot_bias: float = 1.0
     wheat_bias: float = 1.0
@@ -878,6 +891,13 @@ def sell_orders(obs: Observation, p: Params) -> list[list]:
         res = SELL_FRACS.get(item, p.sell_min_frac)
         if item == "FERTILIZER":
             res = min(res, p.fert_sell_min_frac)
+        if item == "MELON" and obs.opp_melon_soon >= p.frontrun_melon_tiles:
+            # v8's first opponent-aware rule: their melon pipeline is visible ten days out,
+            # the glut is quadratic, and nothing refills the price — so when their harvest
+            # wave is about to land, whoever sells first gets today's price and whoever
+            # sells second gets the crater (observed: 275 -> 115 in one day). Relax our
+            # reserve toward the post-wave price and get out ahead of them.
+            res = min(res, p.frontrun_sell_frac)
         if under_pressure:
             # Overflow at the end-of-day dump is *destroyed* — shed space outranks price.
             res = min(res, p.sell_min_frac_pressure)
@@ -1037,6 +1057,16 @@ def _plant_tile_tasks(obs: Observation, p: Params, tile: Tile) -> list[Task]:
     decaying = tile.max_lifespan_step >= 0 and obs.step >= tile.max_lifespan_step
     if tile.yield_units > 0 and tile.age_days >= c["first_yield_day"]:
         if decaying:
+            tasks.append(Task(tile.x, tile.y, ["HARVEST"], p.prio_harvest_decay, "harvest"))
+        elif (tile.crop == "MELON"
+              and obs.opp_melon_soon >= p.frontrun_melon_tiles):
+            # v8: harvest ahead of the opponent's dump. Their melon pipeline is visible ten
+            # days out and the glut is quadratic with no town demand to refill it — measured
+            # on seed 700: their 13-tile wave takes the price 277 -> 81 -> 37 in three days,
+            # and our own harvest matures one day AFTER the crash by default (harvest_age
+            # waits for max yield). Four units at 274 beat six units at 37 by 7x, so once
+            # their wave is imminent the marginal yield of waiting is worthless. Priced like
+            # decay because it is decay — the value rots per turn once their dump lands.
             tasks.append(Task(tile.x, tile.y, ["HARVEST"], p.prio_harvest_decay, "harvest"))
         elif tile.age_days >= harvest_age(tile.crop):
             tasks.append(Task(tile.x, tile.y, ["HARVEST"], p.prio_harvest_ready, "harvest"))

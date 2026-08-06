@@ -134,6 +134,10 @@ class Observation:
 
     cash: float = 0.0
     opponent_cash: float = 0.0
+    # Opponent melon tiles within ~3 days of maturity (age >= 7 of melon's 10). Their whole
+    # farm is visible every turn; this is the one number that prices tomorrow's melon
+    # market, because melon gluts quadratically and nothing drains it back down.
+    opp_melon_soon: int = 0
 
     tiles: list[Tile] = field(default_factory=list)          # flat, all cells
     grid: dict[tuple[int, int], Tile] = field(default_factory=dict)
@@ -287,6 +291,12 @@ def parse(raw_obs: Any, raw_cfg: Any = None) -> Observation:
     for i, other in enumerate(farms):
         if i != player:
             obs.opponent_cash = float(other.get("money", 0.0) or 0.0)
+            for orow in other.get("tiles", []) or []:
+                for cell in orow:
+                    if (isinstance(cell, dict) and cell.get("kind") == "PLANT"
+                            and cell.get("crop") == "MELON"
+                            and day - int(cell.get("planted_day", day)) >= 7):
+                        obs.opp_melon_soon += 1
             break
 
     rows = farm.get("tiles", []) or []

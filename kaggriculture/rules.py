@@ -721,6 +721,11 @@ def _pickup_tasks(obs: Observation, p: Params) -> list[Task]:
         # A redundant shed trip costs one op; a wiped bank costs a $160-200 product.
         available = obs.shed.get("WHEAT", 0)
         if available > 0:
+            # Re-tested 2026-08-06 and the redundancy above is load-bearing: subtracting
+            # wheat already in hand from `unfed` takes unfed animal-days 14.7 -> 31.8,
+            # escapes 0.0 -> 1.9, idle 10.9% -> 15.6% and the head-to-head 20/20 -> 19/20.
+            # We do spend ~656 unit-turns on PICKUP against the leaderboard agent's near
+            # zero, but those trips are what keeps the herd fed. Don't reclaim them.
             batches = min(p.max_pickup_tasks, -(-unfed // max(1, p.wheat_pickup_batch)))
             n = min(p.wheat_pickup_batch, available)
             for b in range(batches):

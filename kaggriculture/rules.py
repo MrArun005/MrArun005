@@ -1336,6 +1336,12 @@ def assign(obs: Observation, p: Params, tasks: list[Task], plants_allowed: int =
     half = obs.board_size // 2
     zone_of = {}
     if p.zone_bonus > 1.0:
+        # Blind round-robin over all four quadrants ON PURPOSE, locked ones included.
+        # It looks wrong — early units get zones inside locked land, one NW owner outbids
+        # the crew, and days 2-3 run a 45-turn cash choke (broke 69 vs 23 unzoned). But
+        # dealing zones over unlocked quadrants only was measured and loses 20,849
+        # (14/20): the modulus changes every time land unlocks, remapping EVERY unit's
+        # zone exactly when the farm grows. Stable ownership beats sensible ownership.
         for i, unit in enumerate(obs.units):
             # Everyone gets a zone, farmer included. Exempting the farmer so it would
             # "serve the pens" was measured and loses 10k contested (119,110 vs 129,433

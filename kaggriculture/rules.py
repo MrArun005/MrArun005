@@ -147,6 +147,13 @@ class Params:
     # it is not what is worth fixing.
     seed_anticipate: bool = False
     seed_fallthrough: bool = False
+    # Narrow retry of the same idea: restock only the crop already mid-rotation, capped at
+    # its own tiles coming free. It does reach melon (verified: buys 14 seed on day 9, ahead
+    # of the day-10 harvest, which plain anticipation never did) and still loses — contested
+    # 4/20, -9,051 a game. On day 9 it spends ~$1,120 of a ~$700 bank, which is the whole
+    # story: every version of "buy seed sooner" starves the ramp it is trying to serve.
+    # The cure for late seed is earlier income — see `wheat_open_tiles`.
+    seed_rotation_topup: bool = False
     tiles_per_shed_slot: float = 1.0  # planted tiles allowed per unit of shed capacity
     seed_cash_reserve: float = 120.0
     # 26, and the 13 it replaces is the most expensive mistake this agent has carried.
@@ -228,7 +235,16 @@ class Params:
     # choose_crop hijacks the one-crop-per-turn seed channel and starves the strawberry
     # drip. The mechanism needs wheat adjacent to pens and feeding from hand-harvests — a
     # dedicated task, not the crop rotation. Don't re-test it through choose_crop.
-    wheat_open_tiles: int = 0         # wheat tiles to hold through the opening, for cash flow
+    # Measured ON, contested, three independent fresh seed sets. The opening wheat block is
+    # cash-flow, not yield: wheat matures in 4 days against melon's 10, so a couple of tiles
+    # turn the opening bank over twice before the melon engine pays anything, and the herd and
+    # the strawberry ramp stop being gated on being broke. This is the root cause behind the
+    # replay symptom that looked like a seed-scheduling bug — we bought seed late because we
+    # had no money, not because the rule was shy.
+    #   vs shipped, seeds 1300-1315 both seats: 30/32, +4,817 +/- 613, worst -1,823
+    #   4 tiles scores a higher margin against shipped but loses 8/32 head-to-head to 2;
+    #   6 is noise and 8 is -6,555. Comparing through a common baseline is not transitive.
+    wheat_open_tiles: int = 2         # wheat tiles to hold through the opening, for cash flow
     wheat_open_last_day: int = 5      # after this the melon/strawberry ramp takes over
     wheat_refill_day: int = 22        # from here wheat fills whatever the ramps left empty
     # The feed garden was BUILT PROPERLY and measured (2026-08-06): a dedicated task planting
@@ -1223,13 +1239,44 @@ def seed_orders(obs: Observation, p: Params) -> list[list]:
     candidates = [first]
     if p.seed_fallthrough:
         candidates += [c for c in ("MELON", "STRAWBERRY", "WHEAT", "CARROT") if c != first]
+    orders = []
     for crop in candidates:
         if crop_value(obs, p, crop) <= 0:
             continue
         order = _seed_order_for(obs, p, crop)
         if order:
-            return [order]
-    return []
+            orders.append(order)
+            break
+    return orders + _rotation_topup(obs, p, orders)
+
+
+def _rotation_topup(obs: Observation, p: Params, already: list) -> list[list]:
+    """Restock the seed of a crop whose own tiles are about to be harvested.
+
+    Strictly narrower than the rejected fall-through: it never changes what the farm grows,
+    it only makes sure the seed for a *rotation already in progress* is in hand before the
+    tile clears. Fall-through failed because it spent the drip's withheld cash on whatever
+    else scored — this cannot, because it is capped at the count of that same crop's tiles
+    coming free.
+
+    Motivated by three ladder replays where twelve melon tiles were harvested across one day
+    onto ground we then left bare until the next morning, for want of seed we never ordered.
+    """
+    if not p.seed_rotation_topup:
+        return []
+    bought = {o[1] for o in already}
+    out = []
+    for crop in ("MELON", "WHEAT", "CARROT"):     # one-time crops rotate; ongoing ones do not
+        if crop in bought or crop_value(obs, p, crop) <= 0:
+            continue
+        want = freeing_soon(obs, p, crop) - obs.seeds.get(crop, 0)
+        if want <= 0:
+            continue
+        want = min(want, plantable_now(obs, p, crop),
+                   int((obs.cash - p.seed_cash_reserve) // CROPS[crop]["seed"]))
+        if want > 0:
+            out.append(["BUY_SEED", crop, want])
+    return out
 
 
 def land_orders(obs: Observation, p: Params) -> list[list]:

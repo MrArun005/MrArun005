@@ -267,6 +267,28 @@ class Params:
     # melon wave, bank 91k vs their 162k). Byte-identical on the bench (prev/starter never
     # crash the price) — accepted as bench-neutral + closes a documented ladder collapse.
     strawberry_plan_floor: float = 0.75
+    # v10, MEASURED AND REJECTED — kept behind flags because the machinery is sound and the
+    # failure is informative, but both default OFF.
+    #
+    # `forward_pricing` values a crop at the price projected for the day it matures
+    # (`Observation.forward_price`: known town drain + both farms' visible pipeline). It is
+    # strictly better information than spot. On its own it changed nothing (0/16, delta 0)
+    # because `choose_crop`'s ladder only consults `crop_value` as a `> 0` gate.
+    #
+    # `dynamic_crop_choice` then ranked crops by that value instead of following the ladder.
+    # It played a genuinely adaptive game — rotated off melon as the glut curve bit, pivoted
+    # to wheat on day 20, and found carrot as endgame filler (28 tiles, a crop no version of
+    # this engine had ever planted) — and lost 0/16 at -22,077 a game (97,982 vs 120,059).
+    #
+    # Why: value-per-tile-day is the wrong denominator. Unit *actions* are the binding
+    # constraint (SPEC "Consequences"), and the ranking is blind to them — carrot re-costs a
+    # PLANT every 3 days for $35 units, and the diversification forced by `max_crop_share`
+    # spread the crew thin. The ladder is not naive hardcoding; it encodes action cost, the
+    # strawberry ramp's compounding and opening cash flow, none of which this model sees.
+    # A future attempt should price coins per action, not per tile-day.
+    forward_pricing: bool = False
+    dynamic_crop_choice: bool = False
+    max_crop_share: float = 0.6       # ceiling on one crop's share of planted tiles
     # ACCEPTED (a tombstone correctly reversed): feed already in hands counts against what
     # needs fetching. Pre-rounds this was harmful (unfed 14.7 -> 31.8 — far-carried wheat
     # starved pens). Feeding rounds deliver the carrier to the animal, so the redundant
@@ -461,38 +483,52 @@ def _bias(p: Params, crop: str) -> float:
 
 
 def crop_value(obs: Observation, p: Params, crop: str) -> float:
-    """Expected coins per tile per day, at current market price.
+    """Coins per tile-day, priced at the market projected for the day it matures.
 
-    The live price does *less* work here than it looks. Melon only falls below carrot when
-    `(6p - 80)/10 < 28.3`, i.e. below **$60 a melon** — by which point most of the margin is
-    already gone. So price feedback is a backstop, not the mechanism; `melon_tile_cap` is
-    what actually bounds melon. Kept because it correctly handles the endgame (crops that
-    cannot mature score -inf) and rotates away from a genuinely collapsed market.
+    Valuing a crop at *today's* price is what produced both of this engine's monocultures:
+    a melon planted now does not exist for ten days, and by then the town has drained the
+    market and both farms have refilled it. Every term is knowable in advance:
+
+      * the town's drain is deterministic once the unlocked shops are known
+        (`obs.drain_over`), and which shops unlock is random per game — so this is the term
+        that makes two different games correctly want two different crops
+      * the supply already growing on both farms is public (`obs.pipeline`)
+      * our own harvest lands the same day, so it is priced in as `extra_supply`
+
+    Wheat matters more than its $25 base suggests: its glut side is `log` (a heavy dump
+    still clears ~$19) while scarcity is `sqrt` at 0.80 — the one crop that cannot be
+    crashed. The premium crops price themselves out through `linear`/`sq` curves as soon as
+    supply arrives, which this forecast sees before the seed goes into the ground.
     """
     c = CROPS[crop]
-    price = obs.prices.get(crop, BASE_PRICE[crop])
     if c["ongoing"]:
-        # Ongoing crops rot after max_yield cumulative productions. Tomato never earns its
-        # keep (12/day town demand, mediocre price). Strawberry is the exception and the
-        # public meta's premium crop: 24/day of shop demand holds its price above base, so
-        # its 4 productions at ~$120 clear the $100 seed with room to spare — as long as
-        # the tile can still reach first yield before the season ends.
         if crop != "STRAWBERRY":
-            return NEG_INF
+            return NEG_INF                  # tomato: 12/day drain, 12-day cycle, never pays
         if obs.day + c["first_yield_day"] > obs.total_days - 2:
             return NEG_INF
-        # Plan on demand-backed value, not spot panic: 24/day of town demand drains any
-        # strawberry glut back up, so a crashed price is temporary — but reading spot here
-        # made the farm abandon its backbone when an opponent flooded (ladder ep 90422705:
-        # strawberry executed 138 vs our normal ~210, a 22-tile panic melon wave instead,
-        # bank 91k). The floor prices future productions at what the market recovers to.
-        price = max(price, p.strawberry_plan_floor * BASE_PRICE[crop])
+        # Price the middle of the production run, not the first tick, and include the
+        # spot floor: 24/day of town demand drains a strawberry glut back up, so a crashed
+        # price is temporary. Reading spot alone made the farm abandon its backbone when an
+        # opponent flooded (ladder ep 90422705: strawberry executed 138 vs our normal ~210,
+        # a 22-tile panic melon wave instead, bank 91k).
         cycle = c["first_yield_day"] + c["interval"] * c["max_yield"]
+        if p.forward_pricing:
+            mid = c["first_yield_day"] + c["interval"] * (c["max_yield"] - 1) // 2
+            price = obs.forward_price(crop, mid * obs.turns_per_day,
+                                      extra_supply=c["max_yield"])
+        else:
+            price = obs.prices.get(crop, BASE_PRICE[crop])
+        price = max(price, p.strawberry_plan_floor * BASE_PRICE[crop])
         return (c["max_yield"] * price - c["seed"]) / cycle
     age = harvest_age(crop)
     if obs.day + age > obs.total_days - 1:
         return NEG_INF                      # cannot mature before the season ends
-    gross = expected_yield(crop) * price * _bias(p, crop)
+    units = expected_yield(crop)
+    if p.forward_pricing:
+        price = obs.forward_price(crop, age * obs.turns_per_day, extra_supply=units)
+    else:
+        price = obs.prices.get(crop, BASE_PRICE[crop])
+    gross = units * price * _bias(p, crop)
     return (gross - c["seed"]) / age
 
 
@@ -514,6 +550,8 @@ def choose_crop(obs: Observation, p: Params) -> str | None:
     Capping tiles instead of reacting to price also fixes the cash-flow hole: melon pays
     nothing until day 10, so the remaining tiles go to carrot and keep the lights on.
     """
+    if p.dynamic_crop_choice:
+        return choose_crop_dynamic(obs, p)
     counts = crop_tile_counts(obs)
     # Portfolio, not a single value ranking: fill the melon engine first (highest $/tile-day,
     # capped by its own glut curve), then the staggered strawberry waves (premium price,
@@ -556,6 +594,37 @@ def choose_crop(obs: Observation, p: Params) -> str | None:
         return "STRAWBERRY"
     best, best_value = None, 0.0
     for crop in ("WHEAT", "CARROT"):
+        value = crop_value(obs, p, crop)
+        if value > best_value:
+            best, best_value = crop, value
+    return best
+
+
+def choose_crop_dynamic(obs: Observation, p: Params) -> str | None:
+    """Plant whatever the market will pay most for on the day it matures.
+
+    The ladder above encodes one fixed portfolio — melon cap, strawberry ramp day, wheat
+    bookends — tuned on the average game. But which shops unlock is random per episode, so
+    the demand this game actually dealt is different every time: measured across four seeds
+    the hungriest product by day 12 was wheat, then strawberry+milk, then wool, then carrot.
+    A fixed plan is right on average and wrong in most individual games, and it is what
+    every frozen route agent on the ladder is playing.
+
+    Ranking on `crop_value` instead makes the caps emergent rather than magic. Melon needs
+    no tile cap here: as melon supply builds, its projected price collapses through the `sq`
+    glut curve, its value falls below wheat, and the farm rotates off it on its own. The
+    only hard guards left are the ones the forecast cannot see: a per-crop tile ceiling to
+    keep one product from owning the whole farm (its price is not the only thing that
+    saturates — so does the shed), and the season-end viability check inside `crop_value`.
+    """
+    counts = crop_tile_counts(obs)
+    planted = sum(counts.values()) or 1
+    best, best_value = None, 0.0
+    for crop in ("WHEAT", "STRAWBERRY", "MELON", "CARROT"):
+        if crop == "STRAWBERRY" and obs.day > p.strawberry_last_day:
+            continue
+        if counts.get(crop, 0) >= planted * p.max_crop_share and planted >= 8:
+            continue                        # keep one product from owning the farm
         value = crop_value(obs, p, crop)
         if value > best_value:
             best, best_value = crop, value

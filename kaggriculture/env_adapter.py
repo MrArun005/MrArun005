@@ -91,6 +91,39 @@ def market_price(item: str, inventory: float) -> int:
         price = base - amp * _shape(p["af"], inventory - MARKET_I0)
     return max(1, int(round(price)))
 
+# Which shops drain which products, and how hard. A single-product shop pulls 2 per tick
+# (engine: `multiplier = 2 if len(products) == 1`). Shops unlock at random every 3 days, so
+# the demand mix is different in every game — this table is what lets an agent read the
+# demand it actually got instead of the demand an average game would have had.
+SHOP_PRODUCTS = {
+    "BAKERY": ("EGG", "WHEAT"),
+    "PIZZA_SHOP": ("MILK", "TOMATO", "WHEAT"),
+    "BRUNCH_SPOT": ("EGG", "WHEAT", "STRAWBERRY"),
+    "YARN_STORE": ("WOOL",),
+    "ICE_CREAM_SHOP": ("STRAWBERRY", "MILK", "WHEAT"),
+    "PET_CAFE": ("CARROT",),
+    "SMOOTHIE_SHOP": ("STRAWBERRY", "MILK"),
+    "FARMERS_MARKET": ("WHEAT", "CARROT", "TOMATO", "STRAWBERRY"),
+}
+SHOP_SELL_INTERVAL = 4        # turns between shop consumption ticks
+CENTER_SELL_INTERVAL = 12     # turns between town-centre ticks
+CENTER_SCHEDULE = ((20, 4), (10, 2), (0, 1))   # (day threshold, units per tick), high first
+
+
+def center_multiplier(day: int) -> int:
+    return next(m for threshold, m in CENTER_SCHEDULE if day >= threshold)
+
+
+def shop_drain_per_tick(item: str, shops) -> int:
+    """Units of `item` every unlocked shop removes per shop tick."""
+    total = 0
+    for name in shops:
+        products = SHOP_PRODUCTS.get(name, ())
+        if item in products:
+            total += 2 if len(products) == 1 else 1
+    return total
+
+
 DIRECTIONS = {"NORTH": (0, -1), "SOUTH": (0, 1), "EAST": (1, 0), "WEST": (-1, 0)}
 
 
@@ -198,6 +231,8 @@ class Observation:
 
     shed_access: list[tuple[int, int]] = field(default_factory=list)
     raw: Any = None
+    # Uncollected units per product growing on either farm, filled during parse.
+    _pipeline_cache: dict[str, int] = field(default_factory=dict)
 
     # --- derived helpers ---------------------------------------------------
 
@@ -239,6 +274,49 @@ class Observation:
         if extra < 0 or extra >= len(LAND_PRICES):
             return None
         return LAND_PRICES[extra]
+
+    # --- demand forecast ---------------------------------------------------
+    # The town's consumption is fully deterministic once you know which shops are open,
+    # so the price a crop will fetch *on the day it matures* is computable rather than
+    # guessable. That is the whole basis of choosing what to plant: the current price
+    # says nothing about a melon that will not exist for ten more days.
+
+    def drain_over(self, item: str, steps: int) -> int:
+        """Units of `item` the town will consume over the next `steps` turns."""
+        if steps <= 0:
+            return 0
+        per_shop_tick = shop_drain_per_tick(item, self.shops)
+        total = 0
+        for step in range(self.step + 1, self.step + steps + 1):
+            if step % SHOP_SELL_INTERVAL == 0:
+                total += per_shop_tick
+            if step % CENTER_SELL_INTERVAL == 0 and item != "FERTILIZER":
+                total += center_multiplier(step // self.turns_per_day)
+        return total
+
+    def daily_drain(self, item: str) -> float:
+        """Current consumption rate per day — the sustainable sell rate for this item."""
+        ticks = self.turns_per_day / SHOP_SELL_INTERVAL
+        centre = (self.turns_per_day / CENTER_SELL_INTERVAL) * center_multiplier(self.day)
+        return shop_drain_per_tick(item, self.shops) * ticks + (
+            0.0 if item == "FERTILIZER" else centre)
+
+    def pipeline(self, item: str) -> int:
+        """Units of `item` already growing on BOTH farms and not yet harvested.
+
+        Includes the opponent's, which is legal to read and is exactly the supply that
+        will hit the market alongside ours.
+        """
+        return int(self._pipeline_cache.get(item, 0))
+
+    def forward_price(self, item: str, steps_ahead: int, extra_supply: int = 0) -> int:
+        """Price we project for `item` once `steps_ahead` turns have passed."""
+        inv = self.market_inventory.get(item, MARKET_I0)
+        projected = (inv
+                     - self.drain_over(item, steps_ahead)
+                     + self.pipeline(item)
+                     + extra_supply)
+        return market_price(item, projected)
 
 
 @dataclass
@@ -332,16 +410,21 @@ def parse(raw_obs: Any, raw_cfg: Any = None) -> Observation:
         raw=raw_obs,
     )
 
+    # Both farms are public, so the supply that will compete with ours is countable.
     for i, other in enumerate(farms):
+        for orow in other.get("tiles", []) or []:
+            for cell in orow:
+                if not (isinstance(cell, dict) and cell.get("kind") == "PLANT"):
+                    continue
+                crop = cell.get("crop")
+                if crop:
+                    obs._pipeline_cache[crop] = (obs._pipeline_cache.get(crop, 0)
+                                                 + int(cell.get("yield_units", 0) or 0))
+                if (i != player and crop == "MELON"
+                        and day - int(cell.get("planted_day", day)) >= 7):
+                    obs.opp_melon_soon += 1
         if i != player:
             obs.opponent_cash = float(other.get("money", 0.0) or 0.0)
-            for orow in other.get("tiles", []) or []:
-                for cell in orow:
-                    if (isinstance(cell, dict) and cell.get("kind") == "PLANT"
-                            and cell.get("crop") == "MELON"
-                            and day - int(cell.get("planted_day", day)) >= 7):
-                        obs.opp_melon_soon += 1
-            break
 
     rows = farm.get("tiles", []) or []
     for y, row in enumerate(rows):

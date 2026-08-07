@@ -130,7 +130,7 @@ down); town consumption and `BUY_PRODUCT` lower it (price up).
 | EGG | 50 | 332 | linear / 0.40 | **log** / 0.20 | ~$40 forever |
 | MILK | 160 | 122 | sqrt / 0.60 | **linear** / 1.60 | −$2.10 per unit — trap at scale |
 | WOOL | 200 | 105 | log / 0.20 | **sq** / 3.20 | −$0.058·n² — knife-edge |
-| FERTILIZER | 100 | 200 | linear / 0.40 | linear / 0.40 | buy-only, cannot be sold |
+| FERTILIZER | 100 | 200 | linear / 0.40 | linear / 0.40 | sellable, but nothing drains it — see below |
 
 **Clearing is per-unit lockstep across both players.** For each order slot, both players'
 current unit is quoted against the *same* pre-commit inventory, then both commit, then the
@@ -148,9 +148,22 @@ price is re-derived — repeat until both orders drain. Consequences:
 product every 12 turns, ×2 after day 10, ×4 after day 20 — about **140 units per product per
 season**. Each unlocked shop consumes 1 of each of its products every 4 turns (6/day;
 single-product shops 2×). Melon is demanded by **no shop** — town centre only. Wool is the
-`YARN_STORE`'s only product at 2× (12/day once unlocked).
+`YARN_STORE`'s only product at 2× (12/day once unlocked). Fertilizer *is* sellable
+(`SELL` accepts any item in `PRODUCTS`) but **nothing ever drains it**, so its price only
+ever falls — sell it early or not at all.
 
 Selling at roughly the drain rate keeps price pinned near `base`. That is the entire edge.
+
+**Which shops unlock is random, every 3 days, per episode** — so the demand mix is different
+in every game. Measured across four seeds, the most-drained product by day 12 was wheat,
+then strawberry+milk, then wool, then *carrot*. A fixed crop plan is therefore right only on
+average; reading `town.unlocked_shops` and planting toward the demand this game actually
+dealt is the standing edge over every frozen route agent on the ladder.
+
+**Wheat cannot be crashed.** Its glut side is `log` at 0.20 (2×T oversupply still clears $19)
+while scarcity is `sqrt` at 0.80 ($45 at −T). Every premium product (strawberry, melon, milk,
+wool) hits the $1 floor at +T. Wheat is the safe base load; premium crops are the upside bet
+that has to be timed against demand.
 
 ## 5. Scoring
 

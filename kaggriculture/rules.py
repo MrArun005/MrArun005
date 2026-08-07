@@ -119,6 +119,34 @@ class Params:
     # left empty at day 15 are not an opportunity, they are the correct fallow at this
     # headcount — land is free, labour is what binds.
     seed_buffer: int = 12             # seeds to keep queued for the chosen crop
+    # Lead time on seed purchases, in days. Not a schedule: seeds ordered this turn
+    # only exist next turn, so demand must be sized against tiles reaching
+    # `harvest_age` within this window or the replant is always a day late.
+    seed_lead_days: int = 1
+    # MEASURED AND REJECTED — both default OFF. The machinery stays because the failure is
+    # informative and the observation behind it is real; the inference was not.
+    #
+    # Three ladder replays show us a day late on every ramp: on the melon replant day we
+    # bought 0 seeds and planted 0 tiles while the opponent bought 12 seeds five hours before
+    # his harvest and refilled 10 tiles the same day. His melons cleared at $192-101, ours at
+    # $37-7 into the crater he had just made. That is all true, and fixing it loses badly.
+    #
+    # `seed_anticipate` sizes seed demand from tiles reaching `harvest_age` within
+    # `seed_lead_days`, so a tile can be replanted the turn it is harvested. Contested A/B
+    # against this build: 1/16, -8,663 a game.
+    #
+    # `seed_fallthrough` lets seed_orders buy for the next crop when the preferred one is
+    # gated (the strawberry drip shuts after `strawberry_seed_hour`). Contested: 0/16,
+    # -47,655 a game — it dominates so completely that enabling anticipation on top of it
+    # changes nothing. The ladder's refusal to buy is load-bearing: the drip is a deliberate
+    # stagger, and spending that cash on melon or carrot seed displaces the strawberry ramp
+    # that is actually the backbone.
+    #
+    # The deeper error in the diagnosis: in a mirror, arriving at the melon glut one day
+    # earlier does not win the race, it only moves the collision. The phase lag is real and
+    # it is not what is worth fixing.
+    seed_anticipate: bool = False
+    seed_fallthrough: bool = False
     tiles_per_shed_slot: float = 1.0  # planted tiles allowed per unit of shed capacity
     seed_cash_reserve: float = 120.0
     # 26, and the 13 it replaces is the most expensive mistake this agent has carried.
@@ -1108,49 +1136,100 @@ def hire_orders(obs: Observation, p: Params) -> list[list]:
     return [["HIRE"]] * max(0, min(want, p.max_hires_per_turn))
 
 
-def plantable_now(obs: Observation, p: Params, crop: str) -> int:
-    """Empty tiles we would actually commit to this crop, respecting its caps.
+def freeing_soon(obs: Observation, p: Params, crop: str | None = None) -> int:
+    """One-time crop tiles that will be harvested — and so free — within the seed lead.
 
-    Kept in step with `plant_budget` on purpose: buying seeds for tiles the budget will
-    refuse to plant just converts cash into dead stock.
+    Seeds ordered this turn only exist next turn, so sizing seed demand from tiles that
+    are *already* empty makes replanting on the harvest turn impossible. Measured on three
+    ladder replays: on the melon replant day we bought 0 seeds and planted 0 tiles while
+    the opponent bought 12 seeds five hours ahead of his harvest and refilled 10 tiles the
+    same day. That one day of cycle phase decided both losses — his melons cleared at
+    $192-101, ours at $37-7 into the crater he had just made.
+
+    Derived from `harvest_age`, not a schedule: a tile is "about to free" when it is within
+    the lead of the age at which we would harvest it. Ongoing crops never free their tile
+    by being harvested, so they are excluded.
+    """
+    if not p.seed_anticipate:
+        return 0
+    n = 0
+    for t in obs.tiles:
+        if t.state != "PLANT" or not t.crop or CROPS[t.crop]["ongoing"]:
+            continue
+        if crop is not None and t.crop != crop:
+            continue
+        if t.age_days >= harvest_age(t.crop) - p.seed_lead_days:
+            n += 1
+    return n
+
+
+def plantable_now(obs: Observation, p: Params, crop: str) -> int:
+    """Tiles we could commit to this crop by the time the seeds land, respecting its caps.
+
+    Deliberately *not* the same as `plant_budget`. The budget governs PLANT ops issued this
+    turn and must see real empty ground; this governs what to buy, and has to look one
+    harvest ahead or the seed always arrives a day after the tile.
     """
     planted = sum(1 for t in obs.tiles if t.state == "PLANT")
-    empty = min(sum(1 for t in obs.tiles if t.state == "EMPTY"),
-                max(0, active_tile_cap(obs, p) - planted))
+    freeing = freeing_soon(obs, p)
+    room = sum(1 for t in obs.tiles if t.state == "EMPTY") + freeing
+    # Tiles about to be harvested still count as `planted`, so credit them back before
+    # comparing against the shed-derived ceiling, or the anticipation cancels itself out.
+    room = min(room, max(0, active_tile_cap(obs, p) - (planted - freeing)))
     if crop == "MELON":
-        empty = min(empty, max(0, p.melon_tile_cap - crop_tile_counts(obs).get("MELON", 0)))
+        held = crop_tile_counts(obs).get("MELON", 0) - freeing_soon(obs, p, "MELON")
+        room = min(room, max(0, p.melon_tile_cap - held))
     elif crop == "STRAWBERRY":
-        empty = min(empty, max(0, p.strawberry_tile_cap
-                               - crop_tile_counts(obs).get("STRAWBERRY", 0)))
-    return empty
+        room = min(room, max(0, p.strawberry_tile_cap
+                             - crop_tile_counts(obs).get("STRAWBERRY", 0)))
+    return room
+
+
+def _seed_order_for(obs: Observation, p: Params, crop: str) -> list | None:
+    """One BUY_SEED order for `crop`, or None if it wants none right now."""
+    room = plantable_now(obs, p, crop)
+    if room <= 0:
+        return None
+    if crop == "STRAWBERRY":
+        # Strawberries are ongoing: a cohort planted together rots together. The stagger is
+        # implemented as a seed drip — buy them only in the morning hours, a couple per turn,
+        # so each day plants a small wave instead of one death cohort.
+        if obs.hour > p.strawberry_seed_hour:
+            return None
+        want = min(p.strawberry_drip, room) - obs.seeds.get(crop, 0)
+    else:
+        # Seeds are the throttle on planting: with a dozen units able to plant a dozen tiles
+        # a turn, a small buffer leaves units idle next to bare earth.
+        want = min(p.seed_buffer, room) - obs.seeds.get(crop, 0)
+    if want <= 0:
+        return None
+    affordable = int((obs.cash - p.seed_cash_reserve) // CROPS[crop]["seed"])
+    want = min(want, max(0, affordable))
+    return ["BUY_SEED", crop, want] if want > 0 else None
 
 
 def seed_orders(obs: Observation, p: Params) -> list[list]:
-    crop = choose_crop(obs, p)
-    if crop is None:
+    """Buy for the preferred crop; fall through if it cannot use seeds this turn.
+
+    The old version took `choose_crop`'s single answer and returned nothing when that crop
+    was gated. With strawberry preferred and the drip window shut after
+    `strawberry_seed_hour`, every afternoon bought nothing at all — which is why the replays
+    show zero melon seeds bought even on the turns *after* twelve melon tiles came free.
+    Falling through spends the same cash on the next crop that can actually use it.
+    """
+    first = choose_crop(obs, p)
+    if first is None:
         return []
-    room = plantable_now(obs, p, crop)
-    if room <= 0:
-        return []
-    # Strawberries are ongoing: a cohort planted together rots together. The stagger is
-    # implemented as a seed drip — buy them only in the morning hours, a couple per turn,
-    # so each day plants a small wave instead of one death cohort.
-    if crop == "STRAWBERRY":
-        if obs.hour > p.strawberry_seed_hour:
-            return []
-        want = min(p.strawberry_drip, room) - obs.seeds.get(crop, 0)
-        affordable = int((obs.cash - p.seed_cash_reserve) // CROPS[crop]["seed"])
-        want = min(want, max(0, affordable))
-        return [["BUY_SEED", crop, want]] if want > 0 else []
-    # Seeds are the throttle on planting: with a dozen units able to plant a dozen tiles
-    # a turn, a small buffer leaves units idle next to bare earth. Buy up to the tiles
-    # we can actually fill.
-    want = min(p.seed_buffer, room) - obs.seeds.get(crop, 0)
-    if want <= 0:
-        return []
-    affordable = int((obs.cash - p.seed_cash_reserve) // CROPS[crop]["seed"])
-    want = min(want, max(0, affordable))
-    return [["BUY_SEED", crop, want]] if want > 0 else []
+    candidates = [first]
+    if p.seed_fallthrough:
+        candidates += [c for c in ("MELON", "STRAWBERRY", "WHEAT", "CARROT") if c != first]
+    for crop in candidates:
+        if crop_value(obs, p, crop) <= 0:
+            continue
+        order = _seed_order_for(obs, p, crop)
+        if order:
+            return [order]
+    return []
 
 
 def land_orders(obs: Observation, p: Params) -> list[list]:

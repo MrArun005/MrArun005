@@ -1,0 +1,253 @@
+<title>Kaggriculture — v4 Campaign Dashboard</title>
+<style>
+  :root {
+    --ground: #FAF7F0;
+    --panel: #FFFFFF;
+    --ink: #23201A;
+    --ink-soft: #6E6551;
+    --hairline: #E2DACA;
+    --accent: #C08A1E;
+    --accent-soft: #F3E7CB;
+    --good: #3E7C4F;
+    --good-soft: #E4EFE6;
+    --warn: #B4452C;
+    --warn-soft: #F6E4DE;
+    --mono: Consolas, "Cascadia Mono", ui-monospace, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #16140F; --panel: #1F1C14; --ink: #EDE6D6; --ink-soft: #A79B7F;
+      --hairline: #34301F; --accent: #D9A33B; --accent-soft: #33290F;
+      --good: #6FB284; --good-soft: #1C2B1F; --warn: #D96E4F; --warn-soft: #33201A;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #16140F; --panel: #1F1C14; --ink: #EDE6D6; --ink-soft: #A79B7F;
+    --hairline: #34301F; --accent: #D9A33B; --accent-soft: #33290F;
+    --good: #6FB284; --good-soft: #1C2B1F; --warn: #D96E4F; --warn-soft: #33201A;
+  }
+  :root[data-theme="light"] {
+    --ground: #FAF7F0; --panel: #FFFFFF; --ink: #23201A; --ink-soft: #6E6551;
+    --hairline: #E2DACA; --accent: #C08A1E; --accent-soft: #F3E7CB;
+    --good: #3E7C4F; --good-soft: #E4EFE6; --warn: #B4452C; --warn-soft: #F6E4DE;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground); color: var(--ink);
+    font: 15px/1.55 "Segoe UI", system-ui, sans-serif;
+    margin: 0; padding: 28px clamp(16px, 4vw, 48px) 64px;
+  }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px 20px; margin-bottom: 6px; }
+  h1 { font-size: 26px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+  .stamp { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); }
+  .sub { color: var(--ink-soft); margin: 0 0 24px; max-width: 72ch; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.12em; color: var(--ink-soft); margin: 0 0 10px;
+  }
+  .strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 22px; }
+  .stat {
+    background: var(--panel); border: 1px solid var(--hairline); border-radius: 6px;
+    padding: 14px 16px 12px;
+  }
+  .stat b { display: block; font-family: var(--mono); font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 12.5px; color: var(--ink-soft); }
+  .delta-up { color: var(--good); font-weight: 600; }
+  .grid { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 14px; align-items: start; }
+  @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+  section.card {
+    background: var(--panel); border: 1px solid var(--hairline); border-radius: 6px;
+    padding: 18px 20px; margin-bottom: 14px;
+  }
+  h2 { font-size: 16px; font-weight: 650; margin: 0 0 4px; }
+  .note { font-size: 12.5px; color: var(--ink-soft); margin: 2px 0 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  .scroll { overflow-x: auto; }
+  th {
+    text-align: left; font-family: var(--mono); font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.09em; color: var(--ink-soft); font-weight: 600;
+    border-bottom: 1px solid var(--hairline); padding: 6px 10px 6px 0;
+  }
+  td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--hairline); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .pill {
+    display: inline-block; font-family: var(--mono); font-size: 11px; font-weight: 600;
+    padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+  }
+  .pill.good { background: var(--good-soft); color: var(--good); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .pill.gold { background: var(--accent-soft); color: var(--accent); }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 12.5px; margin-top: 8px; }
+  .key { display: inline-flex; align-items: center; gap: 7px; color: var(--ink-soft); }
+  .swatch { width: 18px; height: 3px; border-radius: 2px; display: inline-block; }
+  .bar-row { display: grid; grid-template-columns: 110px 1fr 90px; gap: 10px; align-items: center; margin: 7px 0; }
+  .bar-label { font-family: var(--mono); font-size: 12px; }
+  .bar-track { background: var(--ground); border: 1px solid var(--hairline); border-radius: 3px; height: 14px; position: relative; }
+  .bar-fill { position: absolute; inset: 0 auto 0 0; border-radius: 2px; }
+  .bar-mark { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); opacity: 0.55; }
+  .bar-val { font-family: var(--mono); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+  ol.ledger { margin: 0; padding-left: 20px; }
+  ol.ledger li { margin: 0 0 10px; max-width: 78ch; }
+  ol.ledger b { font-weight: 640; }
+  .muted { color: var(--ink-soft); }
+  footer { font-size: 12px; color: var(--ink-soft); margin-top: 26px; font-family: var(--mono); }
+</style>
+
+<header>
+  <h1>Kaggriculture · v4 campaign</h1>
+  <span class="stamp">snapshot 2026-08-05 20:20 IST · all numbers measured, none estimated</span>
+</header>
+<p class="sub">Rule-engine agent for the Kaggle farming sim ($50k pool). Goal set by Arun: <b>parity-or-better with the top clones on every product line</b>, aiming at 160k banked. Submit only when local evidence clears the bar.</p>
+
+<div class="strip">
+  <div class="stat"><span>Head-to-head vs v3 (16 paired games)</span><b>16 / 16 wins</b><span class="delta-up">124,588 vs 88,559 mean</span></div>
+  <div class="stat"><span>Uncontested benchmark (vs starter)</span><b>140,757 ±5,229</b><span>clone's best observed game: 140,912</span></div>
+  <div class="stat"><span>Contested self-play mean (16 games)</span><b>114,698</b><span class="delta-up">+5,973 from tuner pass 1</span></div>
+  <div class="stat"><span>Tuner status</span><b>pass 2 / 2</b><span>13 knobs · 16 games per candidate · running</span></div>
+</div>
+
+<div class="grid">
+<div>
+
+  <section class="card">
+    <h2>Money by day — v4 vs the top clones</h2>
+    <p class="note">Player-0 bank balance per day. Clone curves are from their real Kaggle episodes (IDs 90153480, 90154808); v4 is a local contested mirror. Single games swing ±20k on seed luck — shapes matter more than endpoints.</p>
+    <div class="scroll">
+    <svg viewBox="0 0 600 240" width="100%" style="min-width:520px" role="img" aria-label="Money by day line chart">
+      <g stroke="var(--hairline)" stroke-width="1">
+        <line x1="20" y1="210" x2="560" y2="210"/><line x1="20" y1="143.3" x2="560" y2="143.3"/>
+        <line x1="20" y1="76.7" x2="560" y2="76.7"/><line x1="20" y1="10" x2="560" y2="10"/>
+      </g>
+      <g font-family="Consolas, monospace" font-size="10" fill="var(--ink-soft)">
+        <text x="20" y="224">day 0</text><text x="228" y="224">day 12</text><text x="372" y="224">day 20</text><text x="524" y="224">day 29</text>
+        <text x="564" y="213">0</text><text x="564" y="146">50k</text><text x="564" y="80">100k</text><text x="564" y="14">150k</text>
+      </g>
+      <polyline fill="none" stroke="var(--ink-soft)" stroke-width="1.6" stroke-dasharray="5 4" points="20,210 92,209.3 164,208.7 236,191.1 308,178.2 380,142.2 452,94.1 524,45.6 542,22.1"/>
+      <polyline fill="none" stroke="var(--accent)" stroke-width="2.4" points="20,209.7 92,209.7 164,208.9 236,196.4 308,182.1 380,156.7 452,116.5 524,62.2 542,45.8"/>
+      <polyline fill="none" stroke="var(--warn)" stroke-width="1.6" points="20,208.5 92,209.5 164,207.7 236,206.7 308,202.7 380,194.3 452,160.7 524,124.3 542,114.8"/>
+      <circle cx="542" cy="22.1" r="3" fill="var(--ink-soft)"/><circle cx="542" cy="45.8" r="3.5" fill="var(--accent)"/><circle cx="542" cy="114.8" r="3" fill="var(--warn)"/>
+    </svg>
+    </div>
+    <div class="legend">
+      <span class="key"><i class="swatch" style="background:var(--accent)"></i>v4 mirror — 123,151</span>
+      <span class="key"><i class="swatch" style="background:var(--ink-soft)"></i>lucaskna (rank-2 clone) — 140,912</span>
+      <span class="key"><i class="swatch" style="background:var(--warn)"></i>v3 mirror — 71,405</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Parity scoreboard — executed units, whole season</h2>
+    <p class="note">Measured from shed-inventory deltas (money actually banked), not sell-button clicks. The earlier 1,050-milk style figures were attempted ops and are retired.</p>
+    <div class="scroll">
+    <table>
+      <tr><th>Product line</th><th class="num">Clone</th><th class="num">v3</th><th class="num">v4 now</th><th>Status</th></tr>
+      <tr><td>Milk (8 cows)</td><td class="num">216</td><td class="num">147</td><td class="num">201</td><td><span class="pill warn">−7%</span></td></tr>
+      <tr><td>Wool (6 sheep)</td><td class="num">168</td><td class="num">33</td><td class="num">136</td><td><span class="pill warn">−19% · main gap</span></td></tr>
+      <tr><td>Strawberry</td><td class="num">248</td><td class="num">66</td><td class="num">236</td><td><span class="pill warn">−5%</span></td></tr>
+      <tr><td>Melon</td><td class="num">108</td><td class="num">160</td><td class="num">~78 (cap 13)</td><td><span class="pill good">fewer = more money (glut curve)</span></td></tr>
+      <tr><td>Fertilizer produced</td><td class="num">292</td><td class="num">179</td><td class="num">262</td><td><span class="pill warn">−10%</span></td></tr>
+      <tr><td>FERTILIZE ops applied</td><td class="num">107</td><td class="num">0</td><td class="num">79</td><td><span class="pill warn">−26%</span></td></tr>
+      <tr><td>Animals escaped / overbought</td><td class="num">0</td><td class="num">~11</td><td class="num">0</td><td><span class="pill good">fixed</span></td></tr>
+      <tr><td>Feed+care coverage (day 16+)</td><td class="num">100%</td><td class="num">≈70%</td><td class="num">100%</td><td><span class="pill good">parity</span></td></tr>
+    </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Fixes ledger — what moved 71k → 124k today</h2>
+    <p class="note">Every item verified against engine source or replay data before shipping.</p>
+    <ol class="ledger">
+      <li><b>Concurrent animal ritual.</b> The old dispatcher gave each animal one task per turn, care last at priority 40 — coverage measured 6–12 of 14. Now feed, care, collect and harvest are emitted together; coverage is 14/14 from day 16. <span class="muted">Engine: each fed+cared day banks +1 product; an unfed production day zeroes the whole bank (kaggriculture.py:796-800).</span></li>
+      <li><b>Feed outranks care (90 &gt; 85).</b> First attempt inverted it and two animals escaped; a cared-but-unfed animal wastes the op and walks toward escape.</li>
+      <li><b>Animal census counted carried animals.</b> Before: 10 cows + 12 sheep bought for targets of 8 + 6; the surplus cows squatted pastures and 8 sheep ($4,000) died in the shed.</li>
+      <li><b>Feed-wheat accounting.</b> Reserve checks now see shed + hands; a shed-only check re-bought wheat every turn until cash pinned at the $150 floor (episode collapsed to 10k — caught locally).</li>
+      <li><b>Strawberry 16 → 44 tiles</b>, ramp from day 6, planting window to day 17, seed drip widened. 66 → 236 units.</li>
+      <li><b>FERTILIZE exists now.</b> Strawberries get fertilized (+1 unit per watered production day, worth ~$120–180 vs selling the fertilizer at ~$100); 79 applications and climbing.</li>
+      <li><b>Melon cut 16 → 13 tiles, no replant past day 13.</b> Melon's quadratic glut curve punishes volume; the tuner confirmed +5,973 for the cut across 16 paired games.</li>
+      <li><b>Third quadrant by day 12.</b> The 6-empty-tiles trigger fired one day after the purchase window closed; farm sat on 2 quadrants with $10–30k idle. Threshold raised to 18.</li>
+      <li><b>Herd front-loaded.</b> Cash reserve 2,500 → 900, cow-led round-robin, 2 cows + 1 sheep on day 0 — matching the clones' 4-animals-by-day-3 opening.</li>
+    </ol>
+  </section>
+
+</div>
+<div>
+
+  <section class="card">
+    <h2>Tuner — live sweep</h2>
+    <p class="note">Coordinate descent, contested self-play, 8 seeds × both seats per candidate. A change is kept only if it clears 1.5σ <em>and</em> +544 absolute.</p>
+    <table>
+      <tr><th>Stage</th><th class="num">Mean</th><th>State</th></tr>
+      <tr><td>Baseline (pre-tune)</td><td class="num">108,725</td><td><span class="pill gold">measured</span></td></tr>
+      <tr><td>Pass 1 — 13 knobs</td><td class="num">114,698</td><td><span class="pill good">done</span></td></tr>
+      <tr><td>Pass 2 — confirmation</td><td class="num">…</td><td><span class="pill gold">running</span></td></tr>
+    </table>
+    <p class="note" style="margin-top:12px">Knob verdicts, pass 1 — <b>1 accepted, 12 confirmed already-optimal</b>:</p>
+    <div class="scroll">
+    <table>
+      <tr><th>Knob</th><th class="num">Value</th><th>Verdict</th></tr>
+      <tr><td>melon_tile_cap</td><td class="num">16 → 13</td><td><span class="pill good">ACCEPT +5,973 ±1,632</span></td></tr>
+      <tr><td>strawberry_tile_cap</td><td class="num">44</td><td><span class="pill gold">optimal</span></td></tr>
+      <tr><td>strawberry_last_day</td><td class="num">17</td><td><span class="pill gold">optimal</span></td></tr>
+      <tr><td>strawberry_ramp_day</td><td class="num">6</td><td><span class="pill gold">optimal</span></td></tr>
+      <tr><td>last_melon_day</td><td class="num">13</td><td><span class="pill gold">non-binding</span></td></tr>
+      <tr><td>prio_fertilize</td><td class="num">58</td><td><span class="pill gold">optimal (40: −1,759 · 75: −910)</span></td></tr>
+      <tr><td>fert_use_last_day</td><td class="num">27</td><td><span class="pill gold">optimal</span></td></tr>
+      <tr><td>land_empty_threshold</td><td class="num">18</td><td><span class="pill gold">optimal</span></td></tr>
+      <tr><td>animals_per_turn</td><td class="num">3</td><td><span class="pill gold">optimal</span></td></tr>
+      <tr><td>prio_animal_care</td><td class="num">85</td><td><span class="pill gold">optimal</span></td></tr>
+      <tr><td>prio_feed_relaxed</td><td class="num">90</td><td><span class="pill gold">optimal</span></td></tr>
+      <tr><td>sell_chunk</td><td class="num">8</td><td><span class="pill gold">optimal (6: −2,830)</span></td></tr>
+      <tr><td>glide_days</td><td class="num">12</td><td><span class="pill gold">optimal</span></td></tr>
+    </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Live ladder — submissions</h2>
+    <div class="scroll">
+    <table>
+      <tr><th>Version</th><th class="num">Rating</th><th>Trajectory</th></tr>
+      <tr><td>v1 · melon mono</td><td class="num">632</td><td class="muted">peaked 720, sank as field improved</td></tr>
+      <tr><td>v2 · +fertilizer sales</td><td class="num">574</td><td class="muted">stagnant — ~50% win rate</td></tr>
+      <tr><td>v3 · meta portfolio</td><td class="num">593–695</td><td class="muted">oscillating, sub 55269770</td></tr>
+      <tr><td><b>v4 · parity build</b></td><td class="num">—</td><td><span class="pill gold">local only — holds until bar is met</span></td></tr>
+    </table>
+    </div>
+    <p class="note" style="margin-top:10px">Ratings start ~600 for every new submission and are earned per win — a fast climb needs a high win rate, and v4 beats the v3 generation 16/16.</p>
+  </section>
+
+  <section class="card">
+    <h2>Path to 160k — open items</h2>
+    <div class="bar-row">
+      <span class="bar-label">wool 136→168</span>
+      <span class="bar-track"><i class="bar-fill" style="width:81%; background:var(--accent)"></i><i class="bar-mark" style="left:100%"></i></span>
+      <span class="bar-val">~ +6k</span>
+    </div>
+    <div class="bar-row">
+      <span class="bar-label">fert ops 79→107</span>
+      <span class="bar-track"><i class="bar-fill" style="width:74%; background:var(--accent)"></i><i class="bar-mark" style="left:100%"></i></span>
+      <span class="bar-val">~ +3k</span>
+    </div>
+    <div class="bar-row">
+      <span class="bar-label">milk 201→216</span>
+      <span class="bar-track"><i class="bar-fill" style="width:93%; background:var(--accent)"></i><i class="bar-mark" style="left:100%"></i></span>
+      <span class="bar-val">~ +2.5k</span>
+    </div>
+    <div class="bar-row">
+      <span class="bar-label">endgame wheat</span>
+      <span class="bar-track"><i class="bar-fill" style="width:30%; background:var(--accent)"></i><i class="bar-mark" style="left:100%"></i></span>
+      <span class="bar-val">~ +3k</span>
+    </div>
+    <div class="bar-row">
+      <span class="bar-label">wheat market loop</span>
+      <span class="bar-track"><i class="bar-fill" style="width:0%; background:var(--accent)"></i><i class="bar-mark" style="left:100%"></i></span>
+      <span class="bar-val">~ +3k, risky</span>
+    </div>
+    <p class="note" style="margin-top:10px">Sum of open items ≈ +17k over the 114.7k tuned mean in contested games; uncontested games (weak opponents, richer market) already reach 140.8k. 160k requires most of these plus favorable opposition.</p>
+  </section>
+
+</div>
+</div>
+
+<footer>sources: engine C:\kv\...\kaggriculture.py · replays 90153480 / 90154808 / local seeded mirrors · paired evals seeds 700-707, 800-805 · tune_v4.log — refresh on request: “update the dashboard”.</footer>

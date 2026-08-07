@@ -1,5 +1,11 @@
 node_modules/
+.venv/
 dist/
 scripts/*.png
 *.local
 .DS_Store
+
+# kaggriculture
+kaggriculture/__pycache__/
+kaggriculture/*.pyc
+kaggriculture/submission.tar.gz

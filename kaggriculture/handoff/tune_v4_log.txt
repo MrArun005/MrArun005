@@ -1,0 +1,139 @@
+start  mean    108,725  (n=16, opponent=self, need >1.5sigma and >544)
+
+       melon_tile_cap                 16 -> 6        delta    -8,322 ±   2,760
+       melon_tile_cap                 16 -> 10       delta    -2,355 ±   3,521
+ACCEPT melon_tile_cap                 16 -> 13       delta    +5,973 ±   1,632
+       melon_tile_cap                 13 -> 16       delta    -5,973 ±   1,632
+       melon_tile_cap                 13 -> 21       delta      -138 ±   2,415
+       last_melon_day                 13 -> 10       delta        +0 ±       0
+       last_melon_day                 13 -> 12       delta        +0 ±       0
+       last_melon_day                 13 -> 15       delta        +0 ±       0
+       strawberry_tile_cap            44 -> 36       delta      +134 ±     772
+       strawberry_tile_cap            44 -> 52       delta        +0 ±       0
+       strawberry_last_day            17 -> 14       delta    -1,775 ±   1,536
+       strawberry_last_day            17 -> 16       delta      -305 ±     548
+       strawberry_ramp_day             6 -> 4        delta        +0 ±       0
+       strawberry_ramp_day             6 -> 8        delta        +0 ±       0
+       prio_fertilize               58.0 -> 40.0     delta    -1,759 ±   1,232
+       prio_fertilize               58.0 -> 75.0     delta      -910 ±     610
+       fert_use_last_day              27 -> 24       delta    -2,922 ±     164
+       fert_use_last_day              27 -> 26       delta      -479 ±     195
+       sell_chunk                      8 -> 5        delta    -6,812 ±   2,655
+       sell_chunk                      8 -> 6        delta    -2,830 ±   1,410
+       sell_chunk                      8 -> 10       delta       -51 ±     142
+       land_empty_threshold           18 -> 8        delta    -3,684 ±   1,316
+       land_empty_threshold           18 -> 12       delta    -3,990 ±   1,635
+       land_empty_threshold           18 -> 24       delta    -3,487 ±   2,507
+       prio_animal_care             85.0 -> 60.0     delta    -4,011 ±   1,819
+       prio_animal_care             85.0 -> 110.0    delta    -2,916 ±   3,201
+       prio_feed_relaxed            90.0 -> 88.0     delta       +39 ±     182
+       prio_feed_relaxed            90.0 -> 100.0    delta    -1,908 ±   1,609
+       animals_per_turn                3 -> 2        delta    -7,881 ±   2,459
+       animals_per_turn                3 -> 4        delta    -8,000 ±   3,000
+
+-- pass 1 done: mean    114,698
+
+       melon_tile_cap                 13 -> 6        delta   -14,295 ±   2,652
+       melon_tile_cap                 13 -> 10       delta    -8,328 ±   2,890
+       melon_tile_cap                 13 -> 16       delta    -5,973 ±   1,632
+       melon_tile_cap                 13 -> 21       delta      -138 ±   2,415
+       last_melon_day                 13 -> 10       delta        +0 ±       0
+       last_melon_day                 13 -> 12       delta        +0 ±       0
+       last_melon_day                 13 -> 15       delta        +0 ±       0
+       strawberry_tile_cap            44 -> 36       delta      +134 ±     772
+       strawberry_tile_cap            44 -> 52       delta        +0 ±       0
+       strawberry_last_day            17 -> 14       delta    -1,775 ±   1,536
+       strawberry_last_day            17 -> 16       delta      -305 ±     548
+       strawberry_ramp_day             6 -> 4        delta        +0 ±       0
+       strawberry_ramp_day             6 -> 8        delta        +0 ±       0
+       prio_fertilize               58.0 -> 40.0     delta    -1,759 ±   1,232
+       prio_fertilize               58.0 -> 75.0     delta      -910 ±     610
+       fert_use_last_day              27 -> 24       delta    -2,922 ±     164
+       fert_use_last_day              27 -> 26       delta      -479 ±     195
+       sell_chunk                      8 -> 5        delta    -6,812 ±   2,655
+       sell_chunk                      8 -> 6        delta    -2,830 ±   1,410
+       sell_chunk                      8 -> 10       delta       -51 ±     142
+       land_empty_threshold           18 -> 8        delta    -3,684 ±   1,316
+       land_empty_threshold           18 -> 12       delta    -3,990 ±   1,635
+       land_empty_threshold           18 -> 24       delta    -3,487 ±   2,507
+       prio_animal_care             85.0 -> 60.0     delta    -4,011 ±   1,819
+       prio_animal_care             85.0 -> 110.0    delta    -2,916 ±   3,201
+       prio_feed_relaxed            90.0 -> 88.0     delta       +39 ±     182
+       prio_feed_relaxed            90.0 -> 100.0    delta    -1,908 ±   1,609
+       animals_per_turn                3 -> 2        delta    -7,881 ±   2,459
+       animals_per_turn                3 -> 4        delta    -8,000 ±   3,000
+
+-- pass 2 done: mean    114,698  (no change, stopping)
+
+tuned params written to C:\Users\malliar\Desktop\kaggliculture\repo\kaggriculture\params.json
+{
+  "animal_cash_reserve": 900.0,
+  "animal_lead_days": 7,
+  "animals_per_turn": 3,
+  "build_ahead_frac": 0.75,
+  "carrot_bias": 1.0,
+  "dump_turns": 72,
+  "feed_cash_floor": 150.0,
+  "feed_reserve_days": 2.0,
+  "fert_sell_min_frac": 0.25,
+  "fert_use_last_day": 27,
+  "final_day_hands": 8,
+  "final_dump_turns": 3,
+  "glide_days": 12,
+  "hands_per_tile": 0.16,
+  "haul_threshold": 16,
+  "hire_cash_reserve": 60.0,
+  "hire_until_hour": 4,
+  "land_cash_reserve": 1200.0,
+  "land_empty_threshold": 18,
+  "land_lead_days": 5,
+  "land_payback_mult": 1.5,
+  "last_animal_day": 21,
+  "last_land_day": 15,
+  "last_melon_day": 13,
+  "max_hands": 13,
+  "max_hire_cost": 144.0,
+  "max_hires_per_turn": 6,
+  "max_pickup_tasks": 3,
+  "melon_bias": 1.0,
+  "melon_tile_cap": 13,
+  "min_land_day": 4,
+  "move_cost": 0.4,
+  "prio_animal_care": 85.0,
+  "prio_animal_harvest": 55.0,
+  "prio_animal_harvest_partial": 45.0,
+  "prio_build": 46.0,
+  "prio_collect_fert": 50.0,
+  "prio_dig": 22.0,
+  "prio_feed_critical": 120.0,
+  "prio_feed_relaxed": 90.0,
+  "prio_fertilize": 58.0,
+  "prio_harvest_decay": 90.0,
+  "prio_harvest_ready": 55.0,
+  "prio_haul": 12.0,
+  "prio_haul_final": 200.0,
+  "prio_pickup": 108.0,
+  "prio_place_animal": 100.0,
+  "prio_place_animal_pickup": 102.0,
+  "prio_plant": 38.0,
+  "prio_water_bonus": 60.0,
+  "prio_water_urgent": 95.0,
+  "seed_buffer": 12,
+  "seed_cash_reserve": 120.0,
+  "sell_chunk": 8,
+  "sell_min_frac": 0.85,
+  "sell_min_frac_pressure": 0.28,
+  "shed_force_frac": 0.85,
+  "shed_pressure_frac": 0.5,
+  "strawberry_last_day": 17,
+  "strawberry_ramp_day": 6,
+  "strawberry_seed_hour": 8,
+  "strawberry_tile_cap": 44,
+  "target_cows": 8,
+  "target_geese": 0,
+  "target_sheep": 6,
+  "tiles_per_shed_slot": 1.0,
+  "tiles_per_unit": 9.0,
+  "wheat_bias": 1.0,
+  "wheat_pickup_batch": 5
+}

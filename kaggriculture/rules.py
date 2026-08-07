@@ -154,6 +154,20 @@ class Params:
     # story: every version of "buy seed sooner" starves the ramp it is trying to serve.
     # The cure for late seed is earlier income — see `wheat_open_tiles`.
     seed_rotation_topup: bool = False
+    # MEASURED AND REJECTED, default OFF. Additive wheat filler for ground the drip cannot
+    # reach — the one variant that does not substitute for the strawberry ramp.
+    #
+    # The diagnosis it was built on is solid: for twelve straight days the plant budget equals
+    # seeds held, at 0-4, while 20-41 tiles sit bare, cash climbs past $40k and units are not
+    # idle. Seed really is the binding order-of-operations constraint.
+    #
+    # It still loses: vs the v9 tape, our bank 95,551 -> 87,163, and *their* bank rises
+    # 154,918 -> 163,977. That second number is the lesson. Extra tiles do not add output,
+    # they spread the same watering thinner, so we ship less strawberry and milk and the
+    # opponent's prices go up. Units were already idle only 0-1 turns a day: labour is the
+    # real cap and the seed limit merely happened to match it.
+    wheat_filler: bool = False
+    wheat_filler_max: int = 12
     tiles_per_shed_slot: float = 1.0  # planted tiles allowed per unit of shed capacity
     seed_cash_reserve: float = 120.0
     # 26, and the 13 it replaces is the most expensive mistake this agent has carried.
@@ -1247,7 +1261,33 @@ def seed_orders(obs: Observation, p: Params) -> list[list]:
         if order:
             orders.append(order)
             break
-    return orders + _rotation_topup(obs, p, orders)
+    return orders + _rotation_topup(obs, p, orders) + _wheat_filler(obs, p, orders)
+
+
+def _wheat_filler(obs: Observation, p: Params, already: list) -> list[list]:
+    """Buy wheat for empty ground the primary crop's seed cannot cover this turn.
+
+    Additive, not substitutive — which is what separates it from the two rejected attempts.
+    `seed_fallthrough` and an early `wheat_refill_day` both *replaced* the strawberry ramp and
+    lost badly (-47,655 and -85,841). This leaves the drip untouched and only claims tiles the
+    drip was never going to reach.
+
+    Measured cause: for twelve straight days the plant budget equals seeds held, at 0-4, while
+    20-41 tiles sit bare, units are not idle and cash climbs past $40k. The drip is the only
+    thing buying, so the farm runs a third of its land. Wheat is the right filler — $10 a seed,
+    four-day cycle, and a log glut curve that holds ~$20 no matter how much is dumped.
+    """
+    if not p.wheat_filler or crop_value(obs, p, "WHEAT") <= 0:
+        return []
+    empty = sum(1 for t in obs.tiles if t.state == "EMPTY")
+    held = sum(obs.seeds.get(c, 0) for c in CROPS) + sum(o[2] for o in already)
+    planted = sum(1 for t in obs.tiles if t.state == "PLANT")
+    gap = min(empty - held, active_tile_cap(obs, p) - planted - held)
+    if gap <= 0:
+        return []
+    want = min(gap, p.wheat_filler_max,
+               int((obs.cash - p.seed_cash_reserve) // CROPS["WHEAT"]["seed"]))
+    return [["BUY_SEED", "WHEAT", want]] if want > 0 else []
 
 
 def _rotation_topup(obs: Observation, p: Params, already: list) -> list[list]:
@@ -1668,8 +1708,15 @@ def assign(obs: Observation, p: Params, tasks: list[Task], plants_allowed: int =
 def decide(obs: Observation, p: Params | None = None) -> Action:
     p = p or Params()
     crop = choose_crop(obs, p)
+    budget = plant_budget(obs, p, crop)
+    # Seed, not land or labour, is what caps planting mid-game. When the primary crop is out
+    # of seed but wheat is in hand and ground is bare, plant the wheat rather than nothing.
+    if p.wheat_filler and budget <= 0 and crop != "WHEAT" and obs.seeds.get("WHEAT", 0) > 0:
+        alt = plant_budget(obs, p, "WHEAT")
+        if alt > 0 and crop_value(obs, p, "WHEAT") > 0:
+            crop, budget = "WHEAT", alt
     tasks = build_tasks(obs, p, crop)
-    ops = assign(obs, p, tasks, plant_budget(obs, p, crop))
+    ops = assign(obs, p, tasks, budget)
     return Action(unit_ops=ops, market=market_plan(obs, p))
 
 

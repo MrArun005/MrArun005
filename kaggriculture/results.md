@@ -1,4 +1,4 @@
-# Results — current build (v7 lineage, 2026-08-06)
+# Results — current build (v10 on the ladder, v8/v9 lineage in code, 2026-08-06)
 
 Everything below is measured, not projected. Local numbers come from `eval_h2h.py`
 (paired seeds 700–709, both seats); ladder numbers from real episode replays via
@@ -13,10 +13,23 @@ disagree with the `Params` comments in `rules.py`, trust the comments and regene
 | v4 | 55274770 | peaked ~934, drifted to ~920 | 18/34 (53%) — 1/12 vs opponents banking 125k+ |
 | v6 | 55285442 | peaked 1029, settled ~999 | 14/28 (50%) |
 | v7 | 55286208 | 985.6 and climbing at last check | 16/30 (53%) — losses bunched: 9 of 14 within 5–15k |
+| v9 | (id not recorded) | ~2,000 | — |
+| v10 | (id not recorded) | **~2,700** | — |
 
 Rating is opponent-weighted win rate, not bank. The field's 125k+ tier is mostly one
 public agent running under many names (Faris Abqari, Chaitanya Sonaje, Agzam, tong00,
 GzmCR632 — byte-identical play, 152–164k vs v7).
+
+The v9 and v10 rows are ratings reported from the Kaggle UI, not replay-verified — no
+submission id or record captured, so `ladder.py` cannot reconstruct them. Everything above
+v7 in this table is therefore weaker evidence than the rows below it.
+
+**Naming, because it has already caused confusion:** the ladder build called "v10" is the
+v8/v9 accepted stack — opponent front-running, zone ownership, feeding rounds, carried
+wheat, the strawberry floor. It is *not* the thing `rules.py` labels v10 (`forward_pricing`
++ `dynamic_crop_choice`), which is measured, rejected, and ships with both flags `False`.
+The 2,700 build never calls `forward_price` or `pipeline()`. Do not read the rejection
+tombstone as a comment on what is winning.
 
 ## Local bench (contested, seeds 700–709 × both seats)
 

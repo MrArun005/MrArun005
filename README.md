@@ -41,11 +41,29 @@ A drag-and-drop designer, an embeddable viewer and a JavaScript engine that writ
 
 An LLM pipeline that fetches live postings, tailors a truthful, ATS-ready resume to each one (in the resume's own layout or a clean template), drafts a cold email where the posting exposes an address, and tracks every application by code. Every line stays grounded in the source resume. Ships four ways from one set of prompts and evals: web app, headless CLI for cron and CI, Claude Code skill, and subagent.
 
-## Bolt — reinforcement-learning locomotion
+## Bolt — robot-dog brains for the Unitree Go2 and DEEP Robotics Lite3
 
-**[Repo](https://github.com/MrArun005/Cool-Websites)** · Python, MuJoCo/MJX, JAX, Brax, Stable-Baselines3
+**[Repo](https://github.com/MrArun005/Cool-Websites/tree/claude/robot-build-memory-ju76nt)** · **[Robot program](https://github.com/MrArun005/Cool-Websites/tree/claude/robot-build-memory-ju76nt/train/deploy)** · **[Train on free Colab](https://github.com/MrArun005/Cool-Websites/tree/claude/robot-build-memory-ju76nt/train/colab/bolt_gpu.ipynb)** · Python, MuJoCo/MJX, JAX, Brax, Stable-Baselines3
 
-A 12 kg simulated quadruped with real Unitree A1 motor limits, trained with PPO on 4,096 parallel environments on free Colab and Kaggle GPUs. Nine learned gaits and postures at 91–97% on seeded exams with zero falls, a canter at ~2 m/s, a 40 cm jump with run-up, and self-righting from any fall in under a second. Every policy ships with a model card, exam results, and the command that produced them.
+Brains for two real quadrupeds, learned from dog motion capture with reinforcement learning (PPO on 4,096 parallel robots per GPU, free Kaggle and Colab GPUs), and the program that runs them through each maker's own SDK. Walk, trot, pace, canter, turns, sit, lie, get up, steering, and getting back up after a fall. All in simulation so far: neither robot has run it yet.
+
+<p>
+  <a href="https://github.com/MrArun005/Cool-Websites/tree/claude/robot-build-memory-ju76nt"><img src="https://raw.githubusercontent.com/MrArun005/Cool-Websites/claude/robot-build-memory-ju76nt/docs/media/go2_trot_sit.gif" alt="Unitree Go2 in simulation trotting, then sitting" width="49%"></a>
+  <a href="https://github.com/MrArun005/Cool-Websites/tree/claude/robot-build-memory-ju76nt"><img src="https://raw.githubusercontent.com/MrArun005/Cool-Websites/claude/robot-build-memory-ju76nt/docs/media/lite3_trot_canter.gif" alt="DEEP Robotics Lite3 in simulation trotting, then cantering" width="49%"></a>
+</p>
+
+| Area | What it does |
+|---|---|
+| Brains | One brain per robot for all the motion, plus a self-right brain each; numpy only on the robot, no torch |
+| Robot program | Unitree unitree_sdk2 (DDS), or DEEP's UDP joint protocol through a C++ bridge to their MotionSDK; one setting switches simulator and robot |
+| Safety | eases in from the stance, keeps targets inside joint limits, damping mode on a tilt, a stale state or a sustained over-speed |
+| Recovery | fall → self-right → tuck → get up → carry on |
+| Extras | a local pet mind you talk to (moods, memory, tricks), the Go2's own remote, one-command setup and a readiness check |
+| Training | MuJoCo MJX + Brax PPO with delay, joint-damping, motor-speed and push randomization |
+
+**Measured, not claimed.** On each maker's own MuJoCo model, with only the inputs a real robot has: the Go2 brain finishes a 41 s trot / sit / lie / get-up / walk / canter routine 10 times out of 10 (also with 5% of control steps lost and with 0–19 ms of command delay); both robots get back up from 40 falls out of 40 (side, back, tipped, shoved). Open problems are listed too: the Lite3 brain still falls when commands arrive 3–15 ms late on DEEP's model, and the Go2's knees pass 1.2× their rated speed in about 0.5% of control steps. Every number with its command: [PLAN.md](https://github.com/MrArun005/Cool-Websites/tree/claude/robot-build-memory-ju76nt/train/deploy/PLAN.md).
+
+It started as Bolt, a 12 kg simulated quadruped with Unitree A1 motor limits: nine gaits and postures at 91–97% on seeded exams with zero falls, a ~2 m/s canter, a 40 cm jump with run-up, and self-righting in under a second.
 
 ## FriedLiver — a multi-agent IDE
 

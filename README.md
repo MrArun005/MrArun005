@@ -2,7 +2,7 @@
 
 Full-stack engineer (JavaScript/TypeScript, Python) who builds business tools and AI automation end to end: frontends, APIs, dashboards, reporting, and the training pipelines behind learned agents. Senior Software Engineer at [Tecnotree](https://www.tecnotree.com), Bengaluru.
 
-[Portfolio](https://arun-portfolio-kappa.vercel.app) · [LinkedIn](https://linkedin.com/in/arunmallikarjun) · arunmallikarjun005@gmail.com
+[Résumé (PDF)](Arun_Mallikarjuna_Resume.pdf) · [Portfolio](https://arun-portfolio-kappa.vercel.app) · [LinkedIn](https://linkedin.com/in/arunmallikarjun) · arunmallikarjun005@gmail.com
 
 ---
 
